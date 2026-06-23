@@ -1,0 +1,279 @@
+{
+  "schema_version": 1,
+  "task_id": "medigo-extractors",
+  "summary": "MediGo: rewrite all 69 site extractors to match decompiled source APIs",
+  "status": "todo",
+  "created_at": "2026-06-23T17:27:30+00:00",
+  "updated_at": "2026-06-23T17:45:26+00:00",
+  "issues": [
+    {
+      "id": "fix-icourse163",
+      "summary": "Rewrite icourse163: DWR + resourceRpcBean + vod API chain",
+      "scope": "internal/extractor/icourse163/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'resourceRpcBean\\|getMocTermDto\\|vod.study.163' internal/extractor/icourse163/icourse163.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "fix-xuetang",
+      "summary": "Rewrite Xuetang: product/info → chapter → leaf_info → playurl chain",
+      "scope": "internal/extractor/xuetang/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'leaf_info\\|playurl.*appid\\|product/info' internal/extractor/xuetang/xuetang.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "fix-zhihuishu",
+      "summary": "Fix Zhihuishu: correct JSON path + add changeVideoLine 2nd call",
+      "scope": "internal/extractor/zhihuishu/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'changeVideoLine\\|result.uuid\\|result.lines' internal/extractor/zhihuishu/zhihuishu.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "fix-imooc",
+      "summary": "Fix imooc: add encrypted info decode + start/end learn + mongo_id",
+      "scope": "internal/extractor/imooc/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'imooc_decode\\|startlearn\\|endlearn\\|_id=' internal/extractor/imooc/imooc.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "fix-dingtalk",
+      "summary": "Rewrite DingTalk: h5.dingtalk.com API or WebSocket LWP",
+      "scope": "internal/extractor/dingtalk/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'h5.dingtalk\\|group-live-share\\|getLiveRoomInfo' internal/extractor/dingtalk/dingtalk.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "fix-feishu",
+      "summary": "Rewrite Feishu: HTML regex video_url + docx/wiki/file paths",
+      "scope": "internal/extractor/feishu/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'video_url\\|SERVER_DATA\\|docx\\|wiki' internal/extractor/feishu/feishu.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-exam",
+      "summary": "12 exam sites: Fenbi, Huatu, Gaodun, Jianshe99, Med66, Hqwx, Wangxiao, Wangxiao233, Dongao, Eoffcn, Kaoyanvip, Yikaobang",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "fix-feishu"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-k12",
+      "summary": "6 K12 sites: Xueersi, Yangcong, Yixiaoerguo, Speiyou, Gaotu, Koolearn",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-exam"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-online",
+      "summary": "7 online course sites: Cto51, Huke88, Magedu, Itbaizhan, Luffycity, Tmooc, Mashibing",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-k12"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-knowledge",
+      "summary": "9 knowledge payment sites: Xiaoetech, Xiaoeapp, Youzan, Qlchat, Lizhiweike, Renrenjiang, Sanjieke, Duanshu, Lexueyun",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-online"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-enterprise",
+      "summary": "5 enterprise/meeting sites: Meeting, Classin, CCTalk, Baijiayunxiao, Keqq",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-knowledge"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-edu-portal",
+      "summary": "8 education portals: Smartedu, Icourses, Icve, Cnmooc, Open163, Unipus, Ahu, Nmkjxy",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-enterprise"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "batch-misc",
+      "summary": "Remaining ~22 misc sites aligned to decompiled source APIs",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-edu-portal"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./...",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "cleanup-generic",
+      "summary": "Remove sites with dedicated extractors from generic registry, remove dead sites",
+      "scope": "internal/extractor/sites/",
+      "state": "todo",
+      "depends_on": [
+        "batch-misc"
+      ],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && ./medigo --list-extractors | tail -1",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "final-verify",
+      "summary": "Full build + E2E test + source-compare audit on all extractors",
+      "scope": ".",
+      "state": "todo",
+      "depends_on": [
+        "cleanup-generic"
+      ],
+      "type": "gate",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && go test ./... && bash scripts/e2e_test.sh",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "source-verify",
+      "summary": "Per-site source alignment audit: grep each extractor for real API URLs from decompiled source, flag any fabricated/generic",
+      "scope": "internal/extractor/",
+      "state": "todo",
+      "depends_on": [
+        "batch-misc"
+      ],
+      "type": "gate",
+      "verify": {
+        "cmd": "cd ~/code/medigo && python3 scripts/verify_api_alignment.py",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "code-review-final",
+      "summary": "Full code review: nil panics, resource leaks, security (browser.go Python injection), dead code, unchecked errors",
+      "scope": ".",
+      "state": "todo",
+      "depends_on": [
+        "source-verify"
+      ],
+      "type": "gate",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go vet ./... && gofmt -l . | wc -l | xargs test 0 -eq",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "shared-video-platforms",
+      "summary": "Shared 3rd-party video platform modules: csslcloud (view.csslcloud.net), polyv (hls.videocc.net), bokecc (p.bokecc.com), baijiayun (baijiayun.com/vod)",
+      "scope": "internal/extractor/shared/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && test -f internal/extractor/shared/csslcloud.go && test -f internal/extractor/shared/polyv.go",
+        "result": ""
+      },
+      "notes": ""
+    },
+    {
+      "id": "bilibili-cheese",
+      "summary": "Bilibili cheese (课堂) + bangumi (番剧): pugv API chain from decompiled source",
+      "scope": "internal/extractor/bilibili/",
+      "state": "todo",
+      "depends_on": [],
+      "type": "seq",
+      "verify": {
+        "cmd": "cd ~/code/medigo && go build ./... && grep -c 'pugv' internal/extractor/bilibili/bilibili.go",
+        "result": ""
+      },
+      "notes": ""
+    }
+  ]
+}
