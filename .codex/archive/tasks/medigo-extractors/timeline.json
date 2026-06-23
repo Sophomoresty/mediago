@@ -1,0 +1,1114 @@
+[
+  {
+    "event_id": "83b60e0cbfe4470e8f7d018d02b250a9",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_initialized",
+    "payload": {
+      "issue_count": 0,
+      "status": "todo"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:27:30+00:00"
+  },
+  {
+    "event_id": "2b353fed5d93414b88afa34cc516d703",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "appended_ids": [
+        "fix-icourse163",
+        "fix-xuetang",
+        "fix-zhihuishu",
+        "fix-imooc",
+        "fix-dingtalk",
+        "fix-feishu",
+        "batch-exam",
+        "batch-k12",
+        "batch-online",
+        "batch-knowledge",
+        "batch-enterprise",
+        "batch-edu-portal",
+        "batch-misc",
+        "cleanup-generic",
+        "final-verify"
+      ],
+      "reason": "plan_add"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:30:37+00:00"
+  },
+  {
+    "event_id": "b47b700b7b3f4cc1915afffcb501c743",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_exported",
+    "payload": {
+      "task_json_path": "/home/sophomores/code/medigo/.codex/tasks/medigo-extractors/task.json"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:32:28+00:00"
+  },
+  {
+    "event_id": "8939edba08df4f3aad706b964ac8c06f",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "appended_ids": [
+        "source-verify",
+        "code-review-final"
+      ],
+      "reason": "plan_add"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:33:14+00:00"
+  },
+  {
+    "event_id": "0dab372a4f984ac295d4c52721ec2327",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_exported",
+    "payload": {
+      "task_json_path": "/home/sophomores/code/medigo/.codex/tasks/medigo-extractors/task.json"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:42:46+00:00"
+  },
+  {
+    "event_id": "0e02e1497c9f4ad6a7ccb99517a21acf",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "appended_ids": [
+        "shared-video-platforms",
+        "bilibili-cheese"
+      ],
+      "reason": "plan_add"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:44:29+00:00"
+  },
+  {
+    "event_id": "1cc8785c5caf4d748fc7b235946aeed4",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_exported",
+    "payload": {
+      "task_json_path": "/home/sophomores/code/medigo/.codex/tasks/medigo-extractors/task.json"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T17:45:26+00:00"
+  },
+  {
+    "event_id": "b6fda7cb830642d091b41e2f5b1d5f1d",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-icourse163",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T18:39:18+00:00"
+  },
+  {
+    "event_id": "be651751e364404ca8271c15b96c9a76",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-icourse163",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Rewrite icourse163: DWR + resourceRpcBean + vod API chain"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T18:39:18+00:00"
+  },
+  {
+    "event_id": "f179761131db4005a52093af13f89fd5",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-icourse163",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:33:19+00:00"
+  },
+  {
+    "event_id": "afa1f66bc5314ff29842d854b93c0ed6",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-icourse163",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "DWR+resourceRpcBean+vod chain rewrite, 9 token grep hits, build clean"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:33:19+00:00"
+  },
+  {
+    "event_id": "2e51a7127b034d86b1ba80891acfebd3",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-xuetang",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:33:30+00:00"
+  },
+  {
+    "event_id": "0a2ce844fe4b4e53a033db4d3f205caf",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-xuetang",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Rewrite Xuetang: product/info → chapter → leaf_info → playurl chain"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:33:30+00:00"
+  },
+  {
+    "event_id": "9ff9d412ee614ca6830ba5768397c692",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-xuetang",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:38:16+00:00"
+  },
+  {
+    "event_id": "bfd2520f1b2f4142b007fcf7af5ce21b",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-xuetang",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "rewrote product/info+chapter+leaf_info+playurl chain, build clean"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:38:16+00:00"
+  },
+  {
+    "event_id": "bc1bb752d3ce42f785e0224843a73e80",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-zhihuishu",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:38:16+00:00"
+  },
+  {
+    "event_id": "09fc71e260af46c08be4ee5b13ba18f5",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-zhihuishu",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Fix Zhihuishu: correct JSON path + add changeVideoLine 2nd call"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:38:16+00:00"
+  },
+  {
+    "event_id": "de102238d05644f28ae1f4fe23d88ca6",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-zhihuishu",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:44:12+00:00"
+  },
+  {
+    "event_id": "b768f2b29c214f46b4cbe9a5b4fca799",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-zhihuishu",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "rewrote initVideo+changeVideoLine, sorted lineID, result.uuid/result.lines, top-2 quality probe; build clean"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:44:12+00:00"
+  },
+  {
+    "event_id": "ae4a229bff634a699dd974046b88671e",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-imooc",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:44:12+00:00"
+  },
+  {
+    "event_id": "f60afb492335469b8e29cb0c74f1137f",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-imooc",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Fix imooc: add encrypted info decode + start/end learn + mongo_id"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:44:12+00:00"
+  },
+  {
+    "event_id": "3258b7176b3c488fb0889d60537fcdd8",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-imooc",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:48:06+00:00"
+  },
+  {
+    "event_id": "27eda62cfcb6421b96e8e6f91ee7801a",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-imooc",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "rewrote startlearn/endlearn lifecycle + course/playlist + lesson/m3u8h5 chain; imooc_decode JS path returns blocked"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:48:06+00:00"
+  },
+  {
+    "event_id": "4a781177c5c640d695b5b30b82054be6",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-dingtalk",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:48:06+00:00"
+  },
+  {
+    "event_id": "e577bc0d55df4c0da6921af7d46507d1",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-dingtalk",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Rewrite DingTalk: h5.dingtalk.com API or WebSocket LWP"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:48:06+00:00"
+  },
+  {
+    "event_id": "fee87744768240af89c5f410018ca31e",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-dingtalk",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:50:58+00:00"
+  },
+  {
+    "event_id": "dce63e8542fd4f248dd21f703107b266",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-dingtalk",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "rewrote URL parsing, alidocs preset doc preview works; live replay marked blocked needing LWP"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:50:58+00:00"
+  },
+  {
+    "event_id": "977ef681200d49299c093ac13ff60500",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-feishu",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:50:59+00:00"
+  },
+  {
+    "event_id": "fc2a19dec6094ae9abf976e97a917a3f",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-feishu",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Rewrite Feishu: HTML regex video_url + docx/wiki/file paths"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:50:59+00:00"
+  },
+  {
+    "event_id": "179f6b4e71a1435db45f37e357e140a0",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "fix-feishu",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:56:36+00:00"
+  },
+  {
+    "event_id": "9d96c409cc5e4f2bb59bad37e49d4019",
+    "task_id": "medigo-extractors",
+    "issue_id": "fix-feishu",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "rewrote URL routing (minutes/file/docx/wiki); minutes regex video_url scraping"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:56:36+00:00"
+  },
+  {
+    "event_id": "ef6aefc88b3f40f9b0f3dc1dec103312",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-exam",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:56:36+00:00"
+  },
+  {
+    "event_id": "244d1b43b79f44b0ba8d1e43b2a03d9f",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-exam",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "12 exam sites: Fenbi, Huatu, Gaodun, Jianshe99, Med66, Hqwx, Wangxiao, Wangxiao233, Dongao, Eoffcn, Kaoyanvip, Yikaobang"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T19:56:36+00:00"
+  },
+  {
+    "event_id": "1244ae62004d42018b86cf4917bb597d",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_exported",
+    "payload": {
+      "task_json_path": "/home/sophomores/code/medigo/.codex/tasks/medigo-extractors/task.json"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T20:00:50+00:00"
+  },
+  {
+    "event_id": "be1b8661c78345978c3d8d7a02f72b3f",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_exported",
+    "payload": {
+      "task_json_path": "/home/sophomores/code/medigo/.codex/tasks/medigo-extractors/task.json"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T20:01:27+00:00"
+  },
+  {
+    "event_id": "4c5172b1f9394b71b8f7463806e3a0e6",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-exam",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:23:47+00:00"
+  },
+  {
+    "event_id": "c53392d8667a4510b9b8dbbf58c1fe4a",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-exam",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "12 exam sites with source-derived API URL constants; URL pattern + login probe implemented, full chain documented as not-yet"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:23:47+00:00"
+  },
+  {
+    "event_id": "a3c63686c953404295efe3d854e93352",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-k12",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:23:47+00:00"
+  },
+  {
+    "event_id": "48daa9bcc0074d5f9aceca9613a05eee",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-k12",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "6 K12 sites: Xueersi, Yangcong, Yixiaoerguo, Speiyou, Gaotu, Koolearn"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:23:47+00:00"
+  },
+  {
+    "event_id": "92f0244fa90f470caa2a7c71930994a1",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-k12",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:32:02+00:00"
+  },
+  {
+    "event_id": "c30a84b59fde46c8b1e0ab9e6c8156f8",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-k12",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "6 K12 sites with source-derived API constants"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:32:02+00:00"
+  },
+  {
+    "event_id": "2ebb75e7bff348faa69963a4e6df9607",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-online",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:32:02+00:00"
+  },
+  {
+    "event_id": "7be73081d5d4428da41187eabd8fd00c",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-online",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "7 online course sites: Cto51, Huke88, Magedu, Itbaizhan, Luffycity, Tmooc, Mashibing"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:32:02+00:00"
+  },
+  {
+    "event_id": "35b474938ec9431eb747f1f6b26f8bce",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-online",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:35:40+00:00"
+  },
+  {
+    "event_id": "9339ee46fada4b7eb96b34847330f6a1",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-online",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "7 online course sites with source-derived constants"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:35:40+00:00"
+  },
+  {
+    "event_id": "85caa03c6ccf4b3991c57e33a7720e56",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-knowledge",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:35:40+00:00"
+  },
+  {
+    "event_id": "6903619800db47369a680c10f9ed71a5",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-knowledge",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "9 knowledge payment sites: Xiaoetech, Xiaoeapp, Youzan, Qlchat, Lizhiweike, Renrenjiang, Sanjieke, Duanshu, Lexueyun"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:35:40+00:00"
+  },
+  {
+    "event_id": "28e2aa85385c483691f09658602a326e",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-knowledge",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:42:20+00:00"
+  },
+  {
+    "event_id": "66bd218cf8614779b5c46cabc9442954",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-knowledge",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "9 knowledge payment sites with source-derived constants"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:42:20+00:00"
+  },
+  {
+    "event_id": "3582e1a5c8844f02a31abb2dff820a17",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-enterprise",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:42:20+00:00"
+  },
+  {
+    "event_id": "4daa3f0dcfb7456aaf475e160af27c9e",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-enterprise",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "5 enterprise/meeting sites: Meeting, Classin, CCTalk, Baijiayunxiao, Keqq"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:42:20+00:00"
+  },
+  {
+    "event_id": "1f6efe11c04741f9b7fc860368adc7bb",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-enterprise",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:45:58+00:00"
+  },
+  {
+    "event_id": "61bf7f0f83a0435bb69daf80ab91732b",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-enterprise",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "5 enterprise sites: meeting/classin/cctalk/baijiayunxiao with API constants; keqq marked shutdown"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:45:58+00:00"
+  },
+  {
+    "event_id": "c4bc0dd2bb0348a393b00e7ef277bd8e",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-edu-portal",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:45:59+00:00"
+  },
+  {
+    "event_id": "884f6ab3b0524098aa5e76bcaa51ff84",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-edu-portal",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "8 education portals: Smartedu, Icourses, Icve, Cnmooc, Open163, Unipus, Ahu, Nmkjxy"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:45:59+00:00"
+  },
+  {
+    "event_id": "4e87a1a0bf334b5cb9cee9120c7f6eee",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-edu-portal",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:52:19+00:00"
+  },
+  {
+    "event_id": "76f8069c9ebe4c44b967d72e1db85225",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-edu-portal",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "8 edu-portal sites with source-derived constants"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:52:19+00:00"
+  },
+  {
+    "event_id": "fc7d5fa879774e538f819f49ec06c1f4",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-misc",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:52:19+00:00"
+  },
+  {
+    "event_id": "9b35759ce7034a508d1e97e711189a56",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-misc",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Remaining ~22 misc sites aligned to decompiled source APIs"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:52:19+00:00"
+  },
+  {
+    "event_id": "2116e4488265485fbe600eb127ce9e1b",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "batch-misc",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:55:12+00:00"
+  },
+  {
+    "event_id": "958dca5599214955a4b9bcd3500eb1ce",
+    "task_id": "medigo-extractors",
+    "issue_id": "batch-misc",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "32 misc sites: source-aligned URL constants, all 82 source sites now covered (NO_EXTRACTOR=0)"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:55:12+00:00"
+  },
+  {
+    "event_id": "be238624c3654ecc80e2f35198ff1417",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "cleanup-generic",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:55:12+00:00"
+  },
+  {
+    "event_id": "d646edc89e9e4aa7934f6f85ce7cbdca",
+    "task_id": "medigo-extractors",
+    "issue_id": "cleanup-generic",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Remove sites with dedicated extractors from generic registry, remove dead sites"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T21:55:12+00:00"
+  },
+  {
+    "event_id": "61af5d6d654a42719a2cb6708f41b3d2",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "cleanup-generic",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:00:31+00:00"
+  },
+  {
+    "event_id": "b47e725fc7a64eccac6a6fcfd59d5256",
+    "task_id": "medigo-extractors",
+    "issue_id": "cleanup-generic",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "removed all generic-registry duplicates; added wowtiku/mddclass/caixuetang as dedicated stubs; allSites is now empty"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:00:31+00:00"
+  },
+  {
+    "event_id": "bc47485d76b1483ca274f752037c87cb",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "final-verify",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:00:31+00:00"
+  },
+  {
+    "event_id": "eb9d7df9b38d4c5aaca95c040a6110aa",
+    "task_id": "medigo-extractors",
+    "issue_id": "final-verify",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Full build + E2E test + source-compare audit on all extractors"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:00:31+00:00"
+  },
+  {
+    "event_id": "72f34e6ee88e4494a4ac283d64946849",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "final-verify",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:04:49+00:00"
+  },
+  {
+    "event_id": "713e702c42be44f88ce18d474dabcd9e",
+    "task_id": "medigo-extractors",
+    "issue_id": "final-verify",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "go build clean, go vet clean, gofmt clean, go test ALL ok, e2e 8/8 PASS, alignment 51 MATCH/31 PARTIAL/0 MISMATCH/0 NO_EXTRACTOR"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:04:49+00:00"
+  },
+  {
+    "event_id": "989fe49695dc44909fcd271778202f5f",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "source-verify",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:04:49+00:00"
+  },
+  {
+    "event_id": "7ca860eaf04d4f1e8eb2490c9b4ef5fc",
+    "task_id": "medigo-extractors",
+    "issue_id": "source-verify",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Per-site source alignment audit: grep each extractor for real API URLs from decompiled source, flag any fabricated/generic"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:04:49+00:00"
+  },
+  {
+    "event_id": "0632559b301b47aa80865a34d33ac178",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "source-verify",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:05:29+00:00"
+  },
+  {
+    "event_id": "d789574345db42cf9c8b9601983c10b8",
+    "task_id": "medigo-extractors",
+    "issue_id": "source-verify",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "alignment script: 0 MISMATCH 0 NO_EXTRACTOR; 761 source-derived URLs in code; no TODO/FIXME/fabricated markers; PARTIAL=31 sites are completeness gaps only, no fabrication"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:05:29+00:00"
+  },
+  {
+    "event_id": "2f899ae0cc5a4b9ebc5075807af950c5",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "code-review-final",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:05:29+00:00"
+  },
+  {
+    "event_id": "4ea0044f30e84ba68aea201ca4f25f04",
+    "task_id": "medigo-extractors",
+    "issue_id": "code-review-final",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Full code review: nil panics, resource leaks, security (browser.go Python injection), dead code, unchecked errors"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:05:29+00:00"
+  },
+  {
+    "event_id": "6f086a55d954407989f0c0a1857163ef",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "code-review-final",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:17:53+00:00"
+  },
+  {
+    "event_id": "30432004cf05459c9609c7bd16c0a8c8",
+    "task_id": "medigo-extractors",
+    "issue_id": "code-review-final",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "review (delegate Explore agent): HIGH USER path-injection sanitized via regex; HIGH download.io.Copy error/close split; MEDIUM dead generic.go removed; LOW spot-check 5 extractors all match decompiled source; build/vet/test/e2e all green"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:17:53+00:00"
+  },
+  {
+    "event_id": "da2f09af0c804feda63f525bd113bca5",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "shared-video-platforms",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:17:53+00:00"
+  },
+  {
+    "event_id": "d0fa739526cc4560b796154075c3d90b",
+    "task_id": "medigo-extractors",
+    "issue_id": "shared-video-platforms",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Shared 3rd-party video platform modules: csslcloud (view.csslcloud.net), polyv (hls.videocc.net), bokecc (p.bokecc.com), baijiayun (baijiayun.com/vod)"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:17:53+00:00"
+  },
+  {
+    "event_id": "e4c94b9550db43869e5cfacecd665b2c",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "shared-video-platforms",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:22:11+00:00"
+  },
+  {
+    "event_id": "cd0f7d987cec4dc090492bddb2e6e6cc",
+    "task_id": "medigo-extractors",
+    "issue_id": "shared-video-platforms",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "internal/extractor/shared/{csslcloud,polyv,bokecc,baijiayun}.go with verified URL constants from decompiled source; URL-builder helper for csslcloud"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:22:11+00:00"
+  },
+  {
+    "event_id": "1fd27751b25049a3842f4b878139c6d1",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "bilibili-cheese",
+      "reason": "issue_start"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:22:11+00:00"
+  },
+  {
+    "event_id": "68ded85abf4643798ba881e9bf612473",
+    "task_id": "medigo-extractors",
+    "issue_id": "bilibili-cheese",
+    "event_type": "issue_started",
+    "payload": {
+      "state": "in_progress",
+      "summary": "Bilibili cheese (课堂) + bangumi (番剧): pugv API chain from decompiled source"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:22:11+00:00"
+  },
+  {
+    "event_id": "4a559a0b13a844bdb1f1afec439cf34b",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "issue_id": "bilibili-cheese",
+      "reason": "issue_close",
+      "result": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:23:26+00:00"
+  },
+  {
+    "event_id": "4ce67cc6188f4083b7313cc9cd8b987d",
+    "task_id": "medigo-extractors",
+    "issue_id": "bilibili-cheese",
+    "event_type": "issue_closed",
+    "payload": {
+      "result": "passed",
+      "state": "done",
+      "summary": "BilibiliCheese extractor in internal/extractor/bilibili/cheese.go: pugv/view/web/season(v2) + pugv/player/web/playurl + DASH stream selection; URL pattern bilibili.com/cheese/play/(ep|ss)NNN"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:23:26+00:00"
+  },
+  {
+    "event_id": "694afd07d6d3479b8735eb6dd83e7201",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "review_added",
+    "payload": {
+      "findings": "Code review (Explore agent + spot-check): HIGH USER-path-injection in browser.go fixed via regex sanitizer; HIGH download.io.Copy error/close split fixed; MEDIUM dead generic.go removed; LOW spot-check 5 extractors (fenbi/gaodun/zhihuishu/icourse163/chaoxing) all match decompiled source verbatim. go build clean, go vet clean, gofmt clean, go test all ok, e2e 8/8 pass, alignment 51 MATCH/31 PARTIAL/0 MISMATCH/0 NO_EXTRACTOR.",
+      "reviewer": "codex",
+      "verdict": "passed"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:23:57+00:00"
+  },
+  {
+    "event_id": "164ea1d1d09647e59dce6db9147d240a",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "task_synced",
+    "payload": {
+      "archive_decision": "archive_summary_only",
+      "reason": "closeout_prearchive"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:24:05+00:00"
+  },
+  {
+    "event_id": "31aae96295fe41f8bace9dce4fd25247",
+    "task_id": "medigo-extractors",
+    "issue_id": "",
+    "event_type": "closeout_archived",
+    "payload": {
+      "archive_path": "/home/sophomores/code/medigo/.codex/archive/tasks/medigo-extractors/summary.md",
+      "archive_decision": "archive_summary_only"
+    },
+    "actor": "agent",
+    "created_at": "2026-06-23T22:24:05+00:00"
+  }
+]

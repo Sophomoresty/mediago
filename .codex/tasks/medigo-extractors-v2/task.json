@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "task_id": "medigo-extractors-v2",
+  "summary": "MediGo full source-aligned rewrite: every Extract() must perform real HTTP+parse, no stubs, no fabricated success",
+  "status": "todo",
+  "created_at": "2026-06-23T23:33:40+00:00",
+  "updated_at": "2026-06-23T23:33:40+00:00",
+  "issues": []
+}
