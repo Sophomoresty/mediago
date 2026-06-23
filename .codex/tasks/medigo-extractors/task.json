@@ -2,20 +2,20 @@
   "schema_version": 1,
   "task_id": "medigo-extractors",
   "summary": "MediGo: rewrite all 69 site extractors to match decompiled source APIs",
-  "status": "todo",
+  "status": "in_progress",
   "created_at": "2026-06-23T17:27:30+00:00",
-  "updated_at": "2026-06-23T17:45:26+00:00",
+  "updated_at": "2026-06-23T20:01:27+00:00",
   "issues": [
     {
       "id": "fix-icourse163",
       "summary": "Rewrite icourse163: DWR + resourceRpcBean + vod API chain",
       "scope": "internal/extractor/icourse163/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'resourceRpcBean\\|getMocTermDto\\|vod.study.163' internal/extractor/icourse163/icourse163.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -23,12 +23,12 @@
       "id": "fix-xuetang",
       "summary": "Rewrite Xuetang: product/info → chapter → leaf_info → playurl chain",
       "scope": "internal/extractor/xuetang/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'leaf_info\\|playurl.*appid\\|product/info' internal/extractor/xuetang/xuetang.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -36,12 +36,12 @@
       "id": "fix-zhihuishu",
       "summary": "Fix Zhihuishu: correct JSON path + add changeVideoLine 2nd call",
       "scope": "internal/extractor/zhihuishu/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'changeVideoLine\\|result.uuid\\|result.lines' internal/extractor/zhihuishu/zhihuishu.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -49,12 +49,12 @@
       "id": "fix-imooc",
       "summary": "Fix imooc: add encrypted info decode + start/end learn + mongo_id",
       "scope": "internal/extractor/imooc/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'imooc_decode\\|startlearn\\|endlearn\\|_id=' internal/extractor/imooc/imooc.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -62,12 +62,12 @@
       "id": "fix-dingtalk",
       "summary": "Rewrite DingTalk: h5.dingtalk.com API or WebSocket LWP",
       "scope": "internal/extractor/dingtalk/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'h5.dingtalk\\|group-live-share\\|getLiveRoomInfo' internal/extractor/dingtalk/dingtalk.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -75,12 +75,12 @@
       "id": "fix-feishu",
       "summary": "Rewrite Feishu: HTML regex video_url + docx/wiki/file paths",
       "scope": "internal/extractor/feishu/",
-      "state": "todo",
+      "state": "done",
       "depends_on": [],
       "type": "seq",
       "verify": {
         "cmd": "cd ~/code/medigo && go build ./... && grep -c 'video_url\\|SERVER_DATA\\|docx\\|wiki' internal/extractor/feishu/feishu.go",
-        "result": ""
+        "result": "passed"
       },
       "notes": ""
     },
@@ -88,7 +88,7 @@
       "id": "batch-exam",
       "summary": "12 exam sites: Fenbi, Huatu, Gaodun, Jianshe99, Med66, Hqwx, Wangxiao, Wangxiao233, Dongao, Eoffcn, Kaoyanvip, Yikaobang",
       "scope": "internal/extractor/",
-      "state": "todo",
+      "state": "in_progress",
       "depends_on": [
         "fix-feishu"
       ],
