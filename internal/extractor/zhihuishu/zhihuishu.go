@@ -1,10 +1,10 @@
 // Package zhihuishu implements an extractor for www.zhihuishu.com courses.
 //
 // Video URL chain ported from decompiled Mooc/Courses/Zhihuishu/Zhihuishu_Course.pyc:
-//   1. /video/initVideo?videoID={vid}             → result.uuid + result.lines[].lineID
-//   2. /video/changeVideoLine?videoID=&lineID=&uuid={uuid}
-//                                                 → result (string mp4 URL, per-quality)
-//   The Python source sorts lineIDs desc and probes top 2 (HD + Sd fallback).
+//  1. /video/initVideo?videoID={vid}             → result.uuid + result.lines[].lineID
+//  2. /video/changeVideoLine?videoID=&lineID=&uuid={uuid}
+//     → result (string mp4 URL, per-quality)
+//     The Python source sorts lineIDs desc and probes top 2 (HD + Sd fallback).
 //
 // Course traversal from courseHome HTML uses BeautifulSoup-style scraping that
 // returns blocked-flagged when only courseHome URL is given. Direct videoID URLs

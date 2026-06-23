@@ -1,8 +1,9 @@
 // Package jinbangshidai implements an extractor for baijiayun.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Jinbangshidai/:
-//   https://api.baijiayun.com/web/playback/getPlayInfo?room_id={room_id:}&token={token:}&use_encrypt=0&render=jsonp
-//   https://www.baijiayun.com/vod/video/getPlayUrl?vid={live_id:}&render=jsonp&token={token:}&use_encrypt=0
+//
+//	https://api.baijiayun.com/web/playback/getPlayInfo?room_id={room_id:}&token={token:}&use_encrypt=0&render=jsonp
+//	https://www.baijiayun.com/vod/video/getPlayUrl?vid={live_id:}&render=jsonp&token={token:}&use_encrypt=0
 package jinbangshidai
 
 import (

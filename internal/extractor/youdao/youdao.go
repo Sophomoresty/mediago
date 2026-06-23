@@ -1,13 +1,14 @@
 // Package youdao implements an extractor for ydshengxue.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Youdao/:
-//   https://ai.ydshengxue.com/ai-gw-sale/api/app/v2/order/my-orders
-//   https://ai.ydshengxue.com/ai-product/api/app/v1/products/after-sale
-//   https://ai.ydshengxue.com/ai-product/api/app/v2/products/after-sale/{cid:}
-//   https://ec-server-c.ydlingshi.com/ai-gw-sale/api/app/v2/order/my-orders
-//   https://ec-server-c.ydlingshi.com/ai-product/api/app/v1/products/after-sale
-//   https://ec-server-c.ydlingshi.com/ai-product/api/app/v2/products/after-sale/{cid:}
-//   https://live.ydshengxue.com/hikari-live/api/consumer/v1/key
+//
+//	https://ai.ydshengxue.com/ai-gw-sale/api/app/v2/order/my-orders
+//	https://ai.ydshengxue.com/ai-product/api/app/v1/products/after-sale
+//	https://ai.ydshengxue.com/ai-product/api/app/v2/products/after-sale/{cid:}
+//	https://ec-server-c.ydlingshi.com/ai-gw-sale/api/app/v2/order/my-orders
+//	https://ec-server-c.ydlingshi.com/ai-product/api/app/v1/products/after-sale
+//	https://ec-server-c.ydlingshi.com/ai-product/api/app/v2/products/after-sale/{cid:}
+//	https://live.ydshengxue.com/hikari-live/api/consumer/v1/key
 package youdao
 
 import (

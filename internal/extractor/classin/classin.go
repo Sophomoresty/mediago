@@ -2,10 +2,11 @@
 // playback shares.
 //
 // API endpoints from decompiled Mooc/Courses/Classin/Classin_Config.pyc:
-//   https://w0d-cdn.eeo.cn/cloudspace/api/tencent/getM3u8Token
-//   https://w0d-cdn.eeo.cn/api/classin.api.php?action=getLessonRecordInfo
-//   https://a0d-cdn.eeo.cn/uc/classin_uc.php?action=getuserRecordclasses
-//   https://w0d-cdn.eeo.cn/lms/app/activity/recordClass/get
+//
+//	https://w0d-cdn.eeo.cn/cloudspace/api/tencent/getM3u8Token
+//	https://w0d-cdn.eeo.cn/api/classin.api.php?action=getLessonRecordInfo
+//	https://a0d-cdn.eeo.cn/uc/classin_uc.php?action=getuserRecordclasses
+//	https://w0d-cdn.eeo.cn/lms/app/activity/recordClass/get
 package classin
 
 import (

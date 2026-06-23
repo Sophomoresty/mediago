@@ -126,12 +126,16 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 	}
 
 	bar := progressbar.DefaultBytes(size, filepath.Base(outPath))
-	_, err = io.Copy(io.MultiWriter(f, bar), resp.Body)
-	f.Close()
+	_, copyErr := io.Copy(io.MultiWriter(f, bar), resp.Body)
+	closeErr := f.Close()
 
-	if err != nil {
+	if copyErr != nil {
 		os.Remove(partPath)
-		return err
+		return copyErr
+	}
+	if closeErr != nil {
+		os.Remove(partPath)
+		return closeErr
 	}
 
 	return os.Rename(partPath, outPath)

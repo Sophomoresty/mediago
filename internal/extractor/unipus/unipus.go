@@ -1,8 +1,9 @@
 // Package unipus implements an extractor for moocs.unipus.cn (U校园).
 //
 // API endpoints from decompiled Mooc/Courses/Unipus/:
-//   https://moocs.unipus.cn
-//   https://sso.unipus.cn/sso/gl/login?service=...
+//
+//	https://moocs.unipus.cn
+//	https://sso.unipus.cn/sso/gl/login?service=...
 package unipus
 
 import (

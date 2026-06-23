@@ -1,10 +1,11 @@
 // Package cto51 implements an extractor for edu.51cto.com (51CTO学院) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Cto51/:
-//   https://edu.51cto.com/center/course/user/get-study-course
-//   https://edu.51cto.com/center/wejob/user/index?train_id={}
-//   https://edu.51cto.com/center/wejob/user/course?train_id={}
-//   https://e.51cto.com/study
+//
+//	https://edu.51cto.com/center/course/user/get-study-course
+//	https://edu.51cto.com/center/wejob/user/index?train_id={}
+//	https://edu.51cto.com/center/wejob/user/course?train_id={}
+//	https://e.51cto.com/study
 package cto51
 
 import (
@@ -15,10 +16,10 @@ import (
 )
 
 const (
-	urlStudyCourse  = "https://edu.51cto.com/center/course/user/get-study-course"
-	urlWejobIndex   = "https://edu.51cto.com/center/wejob/user/index?train_id={train_id}"
-	urlWejobCourse  = "https://edu.51cto.com/center/wejob/user/course?train_id={train_id}"
-	urlEStudy       = "https://e.51cto.com/study"
+	urlStudyCourse = "https://edu.51cto.com/center/course/user/get-study-course"
+	urlWejobIndex  = "https://edu.51cto.com/center/wejob/user/index?train_id={train_id}"
+	urlWejobCourse = "https://edu.51cto.com/center/wejob/user/course?train_id={train_id}"
+	urlEStudy      = "https://e.51cto.com/study"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?51cto\.com/`}

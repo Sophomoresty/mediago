@@ -1,9 +1,10 @@
 // Package nmkjxy implements an extractor for nmkjxy.com (柠檬云课堂).
 //
 // API endpoints from decompiled Mooc/Courses/Nmkjxy/:
-//   https://www.nmkjxy.com/
-//   https://api.nmkjxy.com/api/V520/RecentCourse?PageSize={}&PageIndex={}&RecentMonth=false&status=1
-//   https://api.nmkjxy.com/api/product/{course_id}
+//
+//	https://www.nmkjxy.com/
+//	https://api.nmkjxy.com/api/V520/RecentCourse?PageSize={}&PageIndex={}&RecentMonth=false&status=1
+//	https://api.nmkjxy.com/api/product/{course_id}
 package nmkjxy
 
 import (

@@ -1,7 +1,8 @@
 // Package cnmooc implements an extractor for cnmooc.sjtu.cn (上海交大) courses.
 //
 // Endpoints from decompiled Mooc/Courses/Cnmooc/:
-//   https://cnmooc.sjtu.cn   (root only — full chain not in upstream samples)
+//
+//	https://cnmooc.sjtu.cn   (root only — full chain not in upstream samples)
 package cnmooc
 
 import (

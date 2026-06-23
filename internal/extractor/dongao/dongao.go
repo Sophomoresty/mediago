@@ -1,10 +1,11 @@
 // Package dongao implements an extractor for course.dongao.com (东奥会计在线).
 //
 // API endpoints from decompiled Mooc/Courses/Dongao/Dongao_Base.pyc:
-//   https://serveapi.dongao.com/search/memberExamSubjectSeasonListV2
-//   https://serveapi.dongao.com/search/memberServeExamList
-//   https://course.dongao.com/v4/liveAndCourseList
-//   https://my.dongao.com/qrcode/deviceVerify?redirectUrl=...
+//
+//	https://serveapi.dongao.com/search/memberExamSubjectSeasonListV2
+//	https://serveapi.dongao.com/search/memberServeExamList
+//	https://course.dongao.com/v4/liveAndCourseList
+//	https://my.dongao.com/qrcode/deviceVerify?redirectUrl=...
 package dongao
 
 import (
@@ -15,10 +16,10 @@ import (
 )
 
 const (
-	urlExamSeason       = "https://serveapi.dongao.com/search/memberExamSubjectSeasonListV2"
-	urlExamList         = "https://serveapi.dongao.com/search/memberServeExamList"
-	urlLiveCourseList   = "https://course.dongao.com/v4/liveAndCourseList"
-	urlDeviceVerify     = "https://my.dongao.com/qrcode/deviceVerify"
+	urlExamSeason     = "https://serveapi.dongao.com/search/memberExamSubjectSeasonListV2"
+	urlExamList       = "https://serveapi.dongao.com/search/memberServeExamList"
+	urlLiveCourseList = "https://course.dongao.com/v4/liveAndCourseList"
+	urlDeviceVerify   = "https://my.dongao.com/qrcode/deviceVerify"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?dongao\.com/`}

@@ -1,9 +1,10 @@
 // Package huke88 implements an extractor for huke88.com (虎课网) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Huke88/:
-//   https://huke88.com/course/{cid}.html
-//   https://huke88.com/person/study/{uid}.html?page={page}&per-page=30
-//   https://asyn.huke88.com/video/video-play
+//
+//	https://huke88.com/course/{cid}.html
+//	https://huke88.com/person/study/{uid}.html?page={page}&per-page=30
+//	https://asyn.huke88.com/video/video-play
 package huke88
 
 import (

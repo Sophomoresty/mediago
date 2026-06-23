@@ -1,14 +1,15 @@
 // Package kuke implements an extractor for kuke99.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Kuke/:
-//   https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
-//   https://player.polyv.net/secure/{vid}.js
-//   https://www.kuke99.com/prod-api/kukecoregoods/pc/goods/getPackageList
-//   https://www.kuke99.com/prod-api/kukecoregoods/pc/kgUserBuyUnitGoods/getMyClassRoomGoodsPageProt
-//   https://www.kuke99.com/prod-api/kukecoregoods/pc/kgUserBuyUnitGoods/getMyCourseDetailNewProt
-//   https://www.kuke99.com/prod-api/kukeonlineorder/pc/order/myOrderListProt
-//   https://www.kuke99.com/prod-api/kukesearch/pc/kssUserBuyUnitGoods/v1/listMyOrderGoodsProt
-//   https://www.kuke99.com/prod-api/kukestudentservice/userBroadcast/getPolyvNodeInfoProt
+//
+//	https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
+//	https://player.polyv.net/secure/{vid}.js
+//	https://www.kuke99.com/prod-api/kukecoregoods/pc/goods/getPackageList
+//	https://www.kuke99.com/prod-api/kukecoregoods/pc/kgUserBuyUnitGoods/getMyClassRoomGoodsPageProt
+//	https://www.kuke99.com/prod-api/kukecoregoods/pc/kgUserBuyUnitGoods/getMyCourseDetailNewProt
+//	https://www.kuke99.com/prod-api/kukeonlineorder/pc/order/myOrderListProt
+//	https://www.kuke99.com/prod-api/kukesearch/pc/kssUserBuyUnitGoods/v1/listMyOrderGoodsProt
+//	https://www.kuke99.com/prod-api/kukestudentservice/userBroadcast/getPolyvNodeInfoProt
 package kuke
 
 import (

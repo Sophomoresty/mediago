@@ -1,13 +1,14 @@
 // Package hqwx implements an extractor for hqwx.com (环球网校) courses.
 //
 // API chain ported from decompiled Mooc/Courses/Hqwx/Hqwx_Base.pyc:
-//   https://japi.hqwx.com/uc/study/v2/getList
-//   https://japi.hqwx.com/al/v3/getStagesByProduct
-//   https://adminapi.hqwx.com/goods-siteapp/app/v1/course-schedules/list
-//   https://adminapi.hqwx.com/goods-siteapp/app/v2/course-lessons/list
-//   https://japi.hqwx.com/al/v3/selfTask/getStageTasks
-//   https://japi.hqwx.com/al/userKnowledge/resource
-//   https://japi.hqwx.com/al/userKnowledge/resourceBatch
+//
+//	https://japi.hqwx.com/uc/study/v2/getList
+//	https://japi.hqwx.com/al/v3/getStagesByProduct
+//	https://adminapi.hqwx.com/goods-siteapp/app/v1/course-schedules/list
+//	https://adminapi.hqwx.com/goods-siteapp/app/v2/course-lessons/list
+//	https://japi.hqwx.com/al/v3/selfTask/getStageTasks
+//	https://japi.hqwx.com/al/userKnowledge/resource
+//	https://japi.hqwx.com/al/userKnowledge/resourceBatch
 package hqwx
 
 import (

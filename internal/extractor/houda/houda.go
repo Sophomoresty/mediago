@@ -1,9 +1,10 @@
 // Package houda implements an extractor for csslcloud.net courses.
 //
 // API endpoints from decompiled Mooc/Courses/Houda/:
-//   https://view.csslcloud.net/replay/data/meta
-//   https://view.csslcloud.net/replay/user/login
-//   https://view.csslcloud.net/replay/video/play
+//
+//	https://view.csslcloud.net/replay/data/meta
+//	https://view.csslcloud.net/replay/user/login
+//	https://view.csslcloud.net/replay/video/play
 package houda
 
 import (

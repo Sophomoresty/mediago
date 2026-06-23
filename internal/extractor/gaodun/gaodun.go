@@ -1,13 +1,14 @@
 // Package gaodun implements an extractor for gaodun.com (高顿教育) courses.
 //
 // API chain ported from decompiled Mooc/Courses/Gaodun/Gaodun_Course.pyc:
-//   https://apigateway.gaodun.com/passport/api/v3/get/glive-user-info
-//   https://apigateway.gaodun.com/ep-course/api/v2/front/space/vcourse/pc
-//   https://apigateway.gaodun.com/ep-study/front/course/{cid}/syllabus
-//   https://apigateway.gaodun.com/g-study/api/v1/front/gl/course/gradation/{cid}
-//   https://apigateway.gaodun.com/g-study/api/v1/front/course/{cid}/syllabus/glive/{syllabus_id}
-//   https://apigateway.gaodun.com/glive2-vod/api/v1/live/resource?code={vid}&res={mode}
-//   https://apigateway.gaodun.com/glive2-vod/api/v1/vod/check?token={token}
+//
+//	https://apigateway.gaodun.com/passport/api/v3/get/glive-user-info
+//	https://apigateway.gaodun.com/ep-course/api/v2/front/space/vcourse/pc
+//	https://apigateway.gaodun.com/ep-study/front/course/{cid}/syllabus
+//	https://apigateway.gaodun.com/g-study/api/v1/front/gl/course/gradation/{cid}
+//	https://apigateway.gaodun.com/g-study/api/v1/front/course/{cid}/syllabus/glive/{syllabus_id}
+//	https://apigateway.gaodun.com/glive2-vod/api/v1/live/resource?code={vid}&res={mode}
+//	https://apigateway.gaodun.com/glive2-vod/api/v1/vod/check?token={token}
 //
 // Status: URL parsing only; full glive2-vod token + resource chain not implemented.
 package gaodun

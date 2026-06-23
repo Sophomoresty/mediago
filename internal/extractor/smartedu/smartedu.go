@@ -1,9 +1,10 @@
 // Package smartedu implements an extractor for smartedu.cn (国家中小学智慧教育平台).
 //
 // API endpoints from decompiled Mooc/Courses/Smartedu/:
-//   https://basic.smartedu.cn
-//   https://auth.smartedu.cn/uias/login
-//   https://bdcs-file-1.ykt.cbern.com.cn/zxx_secondary
+//
+//	https://basic.smartedu.cn
+//	https://auth.smartedu.cn/uias/login
+//	https://bdcs-file-1.ykt.cbern.com.cn/zxx_secondary
 package smartedu
 
 import (

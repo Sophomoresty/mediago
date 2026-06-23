@@ -1,12 +1,13 @@
 // Package kaimingzhixue implements an extractor for lckmzx.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Kaimingzhixue/:
-//   https://www.baijiayun.com/vod/video/getPlayUrl?vid={video_id}&render=jsonp&token={token}&use_encrypt=0
-//   https://www.lckmzx.com/api/app/courseBasis
-//   https://www.lckmzx.com/api/app/getPcRoomCode/course_id={cid}/chapter_id={chapter_id}
-//   https://www.lckmzx.com/api/app/getPlayToken/chapter_id={chapter_id}/course_id={cid}
-//   https://www.lckmzx.com/api/app/myStudy/course/{cid}
-//   https://www.lckmzx.com/api/app/myStudy/{course_type}
+//
+//	https://www.baijiayun.com/vod/video/getPlayUrl?vid={video_id}&render=jsonp&token={token}&use_encrypt=0
+//	https://www.lckmzx.com/api/app/courseBasis
+//	https://www.lckmzx.com/api/app/getPcRoomCode/course_id={cid}/chapter_id={chapter_id}
+//	https://www.lckmzx.com/api/app/getPlayToken/chapter_id={chapter_id}/course_id={cid}
+//	https://www.lckmzx.com/api/app/myStudy/course/{cid}
+//	https://www.lckmzx.com/api/app/myStudy/{course_type}
 package kaimingzhixue
 
 import (

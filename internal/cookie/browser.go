@@ -7,9 +7,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
+
+// usernameSafe matches valid Windows usernames. Strips path-traversal-capable
+// characters so an unusual $USER value can't escape the temp directory.
+var usernameSafe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+func sanitizeUsername(u string) string {
+	u = usernameSafe.ReplaceAllString(u, "")
+	if len(u) > 64 {
+		u = u[:64]
+	}
+	return u
+}
 
 func ReadBrowserCookies(browser string) ([]*http.Cookie, error) {
 	switch browser {
@@ -43,7 +56,7 @@ func readCookiesWSL(browser string) ([]*http.Cookie, error) {
 	script := buildExportScript(browser)
 
 	// Write to per-user Windows temp (avoid shared C:\Temp TOCTOU)
-	user := os.Getenv("USER")
+	user := sanitizeUsername(os.Getenv("USER"))
 	if user == "" {
 		user = "default"
 	}

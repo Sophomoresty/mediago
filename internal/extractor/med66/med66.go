@@ -2,10 +2,11 @@
 // shares the cdeledu.com infrastructure (sister site of jianshe99).
 //
 // Endpoints from decompiled Mooc/Courses/Med66/:
-//   https://member.med66.com/homes/mycourse
-//   https://member.med66.com/homes/mycourse/courseInfo
-//   https://live.cdeledu.com/                   (live playback host)
-//   https://www.med66.com/OtherItem/loginAgain/index.shtml
+//
+//	https://member.med66.com/homes/mycourse
+//	https://member.med66.com/homes/mycourse/courseInfo
+//	https://live.cdeledu.com/                   (live playback host)
+//	https://www.med66.com/OtherItem/loginAgain/index.shtml
 //
 // Video playback uses csslcloud (view.csslcloud.net).
 package med66

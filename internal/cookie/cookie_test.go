@@ -25,8 +25,8 @@ func TestParseNetscapeFile(t *testing.T) {
 	if cookies[0].Name != "SESSDATA" || cookies[0].Value != "abc123def456" {
 		t.Errorf("unexpected first cookie: %+v", cookies[0])
 	}
-	if cookies[1].Domain != "bilibili.com" {
-		t.Errorf("expected domain bilibili.com, got %s", cookies[1].Domain)
+	if cookies[1].Domain != ".bilibili.com" {
+		t.Errorf("expected domain .bilibili.com (leading dot preserved for subdomain matching), got %s", cookies[1].Domain)
 	}
 }
 

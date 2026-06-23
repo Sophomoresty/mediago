@@ -1,13 +1,14 @@
 // Package eoffcn implements an extractor for xue.eoffcn.com (中公教育 e-课堂).
 //
 // API chain ported from decompiled Mooc/Courses/Eoffcn/Eoffcn_Course.pyc:
-//   https://xue.eoffcn.com/api/check/member
-//   https://xue.eoffcn.com/api/order/complete
-//   https://xue.eoffcn.com/api/new/goods/list
-//   https://xue.eoffcn.com/api/package/list?system_order={}&coding={}
-//   https://xue.eoffcn.com/api/lesson/catagory?package_id={}&system_order={}
-//   https://xue.eoffcn.com/api/new/course/list?system_order={}
-//   https://xue.eoffcn.com/api/lesson/detail?lesson_id={}&package_id={}&module_type={}&system_order={}
+//
+//	https://xue.eoffcn.com/api/check/member
+//	https://xue.eoffcn.com/api/order/complete
+//	https://xue.eoffcn.com/api/new/goods/list
+//	https://xue.eoffcn.com/api/package/list?system_order={}&coding={}
+//	https://xue.eoffcn.com/api/lesson/catagory?package_id={}&system_order={}
+//	https://xue.eoffcn.com/api/new/course/list?system_order={}
+//	https://xue.eoffcn.com/api/lesson/detail?lesson_id={}&package_id={}&module_type={}&system_order={}
 package eoffcn
 
 import (
@@ -18,13 +19,13 @@ import (
 )
 
 const (
-	urlCheckMember     = "https://xue.eoffcn.com/api/check/member"
-	urlOrderComplete   = "https://xue.eoffcn.com/api/order/complete"
-	urlGoodsList       = "https://xue.eoffcn.com/api/new/goods/list"
-	urlPackageList     = "https://xue.eoffcn.com/api/package/list?system_order={system_order}&coding={coding}"
-	urlLessonCatagory  = "https://xue.eoffcn.com/api/lesson/catagory?package_id={package_id}&system_order={system_order}"
-	urlCourseList      = "https://xue.eoffcn.com/api/new/course/list?system_order={system_order}"
-	urlLessonDetail    = "https://xue.eoffcn.com/api/lesson/detail?lesson_id={lid}&package_id={cid}&module_type={m_type}&system_order={system_order}"
+	urlCheckMember    = "https://xue.eoffcn.com/api/check/member"
+	urlOrderComplete  = "https://xue.eoffcn.com/api/order/complete"
+	urlGoodsList      = "https://xue.eoffcn.com/api/new/goods/list"
+	urlPackageList    = "https://xue.eoffcn.com/api/package/list?system_order={system_order}&coding={coding}"
+	urlLessonCatagory = "https://xue.eoffcn.com/api/lesson/catagory?package_id={package_id}&system_order={system_order}"
+	urlCourseList     = "https://xue.eoffcn.com/api/new/course/list?system_order={system_order}"
+	urlLessonDetail   = "https://xue.eoffcn.com/api/lesson/detail?lesson_id={lid}&package_id={cid}&module_type={m_type}&system_order={system_order}"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?eoffcn\.com/`}

@@ -2,12 +2,13 @@
 // (1对2 一笑而过 — biguo + qianxue cloud playback).
 //
 // API endpoints from decompiled Mooc/Courses/Yixiaoerguo/:
-//   https://www.biguo.cn/my/course
-//   https://bjs1.qianxuecloud.com/recordquery
-//   https://bjs1.qianxuecloud.com/recordquerybackup
-//   https://bjs1.qianxuecloud.com/recordquerymu
-//   https://vodquerys1.qianxuecloud.com/playbackquerywebhls
-//   https://vodquerydatas1.qianxuecloud.com/dataplaybackqueryh5
+//
+//	https://www.biguo.cn/my/course
+//	https://bjs1.qianxuecloud.com/recordquery
+//	https://bjs1.qianxuecloud.com/recordquerybackup
+//	https://bjs1.qianxuecloud.com/recordquerymu
+//	https://vodquerys1.qianxuecloud.com/playbackquerywebhls
+//	https://vodquerydatas1.qianxuecloud.com/dataplaybackqueryh5
 package yixiaoerguo
 
 import (
@@ -18,12 +19,12 @@ import (
 )
 
 const (
-	urlMyCourse      = "https://www.biguo.cn/my/course"
-	urlRecordQuery   = "https://bjs1.qianxuecloud.com/recordquery"
-	urlRecordBackup  = "https://bjs1.qianxuecloud.com/recordquerybackup"
-	urlRecordMu      = "https://bjs1.qianxuecloud.com/recordquerymu"
-	urlPlaybackHLS   = "https://vodquerys1.qianxuecloud.com/playbackquerywebhls"
-	urlDataPlayback  = "https://vodquerydatas1.qianxuecloud.com/dataplaybackqueryh5"
+	urlMyCourse     = "https://www.biguo.cn/my/course"
+	urlRecordQuery  = "https://bjs1.qianxuecloud.com/recordquery"
+	urlRecordBackup = "https://bjs1.qianxuecloud.com/recordquerybackup"
+	urlRecordMu     = "https://bjs1.qianxuecloud.com/recordquerymu"
+	urlPlaybackHLS  = "https://vodquerys1.qianxuecloud.com/playbackquerywebhls"
+	urlDataPlayback = "https://vodquerydatas1.qianxuecloud.com/dataplaybackqueryh5"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?(?:biguo|qianxuecloud)\.(?:cn|com)/`}

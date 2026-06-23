@@ -1,11 +1,12 @@
 // Package huatu implements an extractor for huatu.com (华图教育) courses.
 //
 // API chain ported from decompiled Mooc/Courses/Huatu/Huatu_Course.pyc:
-//   https://ocfapi.huatu.com/api/user/my_course
-//   https://ocfapi.huatu.com/api/goods/syllabusBuy
-//   https://ocfapi.huatu.com/api/course/goods/get_player
-//   https://playvideo.vodplayvideo.net/getplayinfo/v4/{app_id}/{file_id}?psign={psign}
-//                                                       (Tencent VOD signature flow)
+//
+//	https://ocfapi.huatu.com/api/user/my_course
+//	https://ocfapi.huatu.com/api/goods/syllabusBuy
+//	https://ocfapi.huatu.com/api/course/goods/get_player
+//	https://playvideo.vodplayvideo.net/getplayinfo/v4/{app_id}/{file_id}?psign={psign}
+//	                                                    (Tencent VOD signature flow)
 //
 // The get_player call returns Tencent VOD app_id/file_id/psign which then go
 // through playvideo.vodplayvideo.net for the manifest URL.

@@ -1,8 +1,9 @@
 // Package wendao implements an extractor for wendao101.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Wendao/:
-//   https://pc.wendao101.com/prod-api
-//   https://wap.wendao101.com/#/pages_mine/myCourse/myCourse
+//
+//	https://pc.wendao101.com/prod-api
+//	https://wap.wendao101.com/#/pages_mine/myCourse/myCourse
 package wendao
 
 import (

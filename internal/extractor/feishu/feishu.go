@@ -6,9 +6,9 @@
 // Feishu doesn't expose a single video_info endpoint — every artefact type has
 // its own embed format. The Python source distinguishes by URL pattern and:
 //   - /file/{fid}    → fetch URL HTML, regex window.SERVER_DATA for "title"+"token",
-//                      then GET the file's preview URL from _feishu_preview_url
+//     then GET the file's preview URL from _feishu_preview_url
 //   - /minutes/{fid} → fetch URL HTML, regex `"video_url":"(http...)"`
-//                      → unicode-unescape that captured string → mp4 URL
+//     → unicode-unescape that captured string → mp4 URL
 //   - /docx, /wiki   → document download flow (TXT/PDF), not a video extractor
 //
 // This Go port handles minutes (the most common video case) and surfaces a

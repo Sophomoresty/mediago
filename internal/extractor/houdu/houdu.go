@@ -1,8 +1,9 @@
 // Package houdu implements an extractor for houduweilai.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Houdu/:
-//   https://api.houduweilai.com/mini/student/othersStudents
-//   https://api.houduweilai.com{}
+//
+//	https://api.houduweilai.com/mini/student/othersStudents
+//	https://api.houduweilai.com{}
 package houdu
 
 import (

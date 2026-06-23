@@ -1,14 +1,15 @@
 // Package xsteach implements an extractor for xsteach.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Xsteach/:
-//   https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
-//   https://www.xsteach.com/api/common/my-course-combobox
-//   https://www.xsteach.com/api/course/course-detail
-//   https://www.xsteach.com/api/course/period
-//   https://www.xsteach.com/api/live/enter/play
-//   https://www.xsteach.com/api/period/get-period-list
-//   https://www.xsteach.com/api/user/my-course/list-v3
-//   https://www.xsteach.com/api/vod/period/play
+//
+//	https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
+//	https://www.xsteach.com/api/common/my-course-combobox
+//	https://www.xsteach.com/api/course/course-detail
+//	https://www.xsteach.com/api/course/period
+//	https://www.xsteach.com/api/live/enter/play
+//	https://www.xsteach.com/api/period/get-period-list
+//	https://www.xsteach.com/api/user/my-course/list-v3
+//	https://www.xsteach.com/api/vod/period/play
 package xsteach
 
 import (

@@ -1,10 +1,11 @@
 // Package tmooc implements an extractor for tmooc.cn (达内TMOOC) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Tmooc/:
-//   https://tts10.tmooc.cn/
-//   https://uc.tmooc.cn/studentCenter/toMyttsPage
-//   https://ttsservice.tmooc.cn/tedu-student/v1/sso-tmooc
-//   https://uc.tmooc.cn/userValidate/getUserInfo
+//
+//	https://tts10.tmooc.cn/
+//	https://uc.tmooc.cn/studentCenter/toMyttsPage
+//	https://ttsservice.tmooc.cn/tedu-student/v1/sso-tmooc
+//	https://uc.tmooc.cn/userValidate/getUserInfo
 package tmooc
 
 import (

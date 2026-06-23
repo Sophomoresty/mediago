@@ -1,14 +1,15 @@
 // Package xiwang implements an extractor for xiwang.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Xiwang/:
-//   https://api.xue.wen-su.com/login/V1/Web/checkLogin?X-Businessline-Id=30
-//   https://api.xue.wen-su.com/mall/detail/1/{cid}
-//   https://api.xue.xi-xue.com/login/V1/Web/checkLogin?X-Businessline-Id=40
-//   https://api.xue.xiwang.com/login/V1/Web/checkLogin?X-Businessline-Id=30
-//   https://api.xue.xiwang.com/mall/detail/1/{cid}
-//   https://gslbsaturnbcc.saasw.vdyoo.com/v1/player/vodshow?appid={app_id}&fid={fid}&bid={bid}
-//   https://i.bcc.wen-su.com/icenter-go/App/StudyCenter/MyCourse/stuCourseList
-//   https://i.bcc.wen-su.com/icenter-go/App/StudyCenter/MyPlans/planListV2
+//
+//	https://api.xue.wen-su.com/login/V1/Web/checkLogin?X-Businessline-Id=30
+//	https://api.xue.wen-su.com/mall/detail/1/{cid}
+//	https://api.xue.xi-xue.com/login/V1/Web/checkLogin?X-Businessline-Id=40
+//	https://api.xue.xiwang.com/login/V1/Web/checkLogin?X-Businessline-Id=30
+//	https://api.xue.xiwang.com/mall/detail/1/{cid}
+//	https://gslbsaturnbcc.saasw.vdyoo.com/v1/player/vodshow?appid={app_id}&fid={fid}&bid={bid}
+//	https://i.bcc.wen-su.com/icenter-go/App/StudyCenter/MyCourse/stuCourseList
+//	https://i.bcc.wen-su.com/icenter-go/App/StudyCenter/MyPlans/planListV2
 package xiwang
 
 import (

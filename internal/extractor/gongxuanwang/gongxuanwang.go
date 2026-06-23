@@ -1,14 +1,15 @@
 // Package gongxuanwang implements an extractor for gongxuanwang.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Gongxuanwang/:
-//   https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
-//   https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/getOpenCourseDetail?courseSkuId={}
-//   https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/info
-//   https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/page
-//   https://lms.gongxuanwang.com/api/gxw-web-student/webLive/getVidAuthorization?userId={user_id}&vid={vid}
-//   https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/getWebSectionPeriodVidVO?courseSkuId={}
-//   https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/microLessonCourseDetail?courseSkuId={}
-//   https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/pageMicroLessonCourse
+//
+//	https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
+//	https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/getOpenCourseDetail?courseSkuId={}
+//	https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/info
+//	https://lms.gongxuanwang.com/api/gxw-web-student/sku/course/page
+//	https://lms.gongxuanwang.com/api/gxw-web-student/webLive/getVidAuthorization?userId={user_id}&vid={vid}
+//	https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/getWebSectionPeriodVidVO?courseSkuId={}
+//	https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/microLessonCourseDetail?courseSkuId={}
+//	https://lms.gongxuanwang.com/api/gxw-web-student/webTimeArrange/pageMicroLessonCourse
 package gongxuanwang
 
 import (

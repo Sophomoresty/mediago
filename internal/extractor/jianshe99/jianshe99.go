@@ -1,10 +1,11 @@
 // Package jianshe99 implements an extractor for jianshe99.com (建设工程教育网) courses.
 //
 // Endpoints from decompiled Mooc/Courses/Jianshe99/:
-//   https://member.jianshe99.com/homes/mycourse
-//   https://elearning.jianshe99.com/
-//   https://gateway.jianshe99.com/doorman/op/
-//   https://elearning.jianshe99.com/xcware/myhome/teachingMaterials.shtm?cwareID={cware_id}&identity={identity}
+//
+//	https://member.jianshe99.com/homes/mycourse
+//	https://elearning.jianshe99.com/
+//	https://gateway.jianshe99.com/doorman/op/
+//	https://elearning.jianshe99.com/xcware/myhome/teachingMaterials.shtm?cwareID={cware_id}&identity={identity}
 //
 // Video playback uses csslcloud (view.csslcloud.net) — implemented in
 // internal/extractor/shared/csslcloud.go (when present).

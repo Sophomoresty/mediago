@@ -1,11 +1,12 @@
 // Package speiyou implements an extractor for speiyou.com (学而思培优 / S-培优).
 //
 // API endpoints from decompiled Mooc/Courses/Speiyou/:
-//   https://course-api-online.speiyou.com/course/v1/student/course/subject-list?stuId={}
-//   https://course-api-online.speiyou.com/course/v1/student/course/list?...
-//   https://course-api-online.speiyou.com/course/v1/student/course/user-live-list?...
-//   https://course-api-online.speiyou.com/course/v1/student/live/list?...
-//   https://classroom-api-online.speiyou.com/classroom/basic/v2/init/auth?resVer=1.1&classroomMode=playback
+//
+//	https://course-api-online.speiyou.com/course/v1/student/course/subject-list?stuId={}
+//	https://course-api-online.speiyou.com/course/v1/student/course/list?...
+//	https://course-api-online.speiyou.com/course/v1/student/course/user-live-list?...
+//	https://course-api-online.speiyou.com/course/v1/student/live/list?...
+//	https://classroom-api-online.speiyou.com/classroom/basic/v2/init/auth?resVer=1.1&classroomMode=playback
 package speiyou
 
 import (
@@ -16,11 +17,11 @@ import (
 )
 
 const (
-	urlSubjectList     = "https://course-api-online.speiyou.com/course/v1/student/course/subject-list?stuId={stu_id}"
-	urlCourseList      = "https://course-api-online.speiyou.com/course/v1/student/course/list?businessBelong=1,3,5,10&courseStatus=0&stdSubject={}&page={}&perPage=20&order=asc&stuId={}"
-	urlUserLiveList    = "https://course-api-online.speiyou.com/course/v1/student/course/user-live-list?stdCourseId={}&type=1&needPage=1&page={}&perPage=50&order=asc&stuId={}"
-	urlLiveList        = "https://course-api-online.speiyou.com/course/v1/student/live/list?businessBelong=1,3,5,10&stuId={stu_id}&liveStatus={status}&nowTime={now_time}&stdSubject={subject}&order={order}&needCourseInfo=1&needPage=1&page={page}&perPage={per_page}"
-	urlClassroomAuth   = "https://classroom-api-online.speiyou.com/classroom/basic/v2/init/auth?resVer=1.1&classroomMode=playback"
+	urlSubjectList   = "https://course-api-online.speiyou.com/course/v1/student/course/subject-list?stuId={stu_id}"
+	urlCourseList    = "https://course-api-online.speiyou.com/course/v1/student/course/list?businessBelong=1,3,5,10&courseStatus=0&stdSubject={}&page={}&perPage=20&order=asc&stuId={}"
+	urlUserLiveList  = "https://course-api-online.speiyou.com/course/v1/student/course/user-live-list?stdCourseId={}&type=1&needPage=1&page={}&perPage=50&order=asc&stuId={}"
+	urlLiveList      = "https://course-api-online.speiyou.com/course/v1/student/live/list?businessBelong=1,3,5,10&stuId={stu_id}&liveStatus={status}&nowTime={now_time}&stdSubject={subject}&order={order}&needCourseInfo=1&needPage=1&page={page}&perPage={per_page}"
+	urlClassroomAuth = "https://classroom-api-online.speiyou.com/classroom/basic/v2/init/auth?resVer=1.1&classroomMode=playback"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?speiyou\.com/`}

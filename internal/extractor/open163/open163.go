@@ -1,10 +1,11 @@
 // Package open163 implements an extractor for open.163.com (网易公开课 VIP).
 //
 // API endpoints from decompiled Mooc/Courses/Open163/:
-//   https://vip.open.163.com/open/trade/pc/pay/order/myOrders.do
-//   https://vip.open.163.com/open/trade/pc/course/getCourseInfo.do
-//   https://c.open.163.com/member/loginStatus.do
-//   https://vip.open.163.com/courses/{course_id}
+//
+//	https://vip.open.163.com/open/trade/pc/pay/order/myOrders.do
+//	https://vip.open.163.com/open/trade/pc/course/getCourseInfo.do
+//	https://c.open.163.com/member/loginStatus.do
+//	https://vip.open.163.com/courses/{course_id}
 package open163
 
 import (
@@ -15,10 +16,10 @@ import (
 )
 
 const (
-	urlMyOrders     = "https://vip.open.163.com/open/trade/pc/pay/order/myOrders.do"
-	urlCourseInfo   = "https://vip.open.163.com/open/trade/pc/course/getCourseInfo.do"
-	urlLoginStatus  = "https://c.open.163.com/member/loginStatus.do"
-	urlCoursePage   = "https://vip.open.163.com/courses/{course_id}"
+	urlMyOrders    = "https://vip.open.163.com/open/trade/pc/pay/order/myOrders.do"
+	urlCourseInfo  = "https://vip.open.163.com/open/trade/pc/course/getCourseInfo.do"
+	urlLoginStatus = "https://c.open.163.com/member/loginStatus.do"
+	urlCoursePage  = "https://vip.open.163.com/courses/{course_id}"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?open\.163\.com/`}

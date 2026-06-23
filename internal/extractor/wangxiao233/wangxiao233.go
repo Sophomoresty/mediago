@@ -1,12 +1,13 @@
 // Package wangxiao233 implements an extractor for wx.233.com (网校233 / 233网校).
 //
 // API chain ported from decompiled Mooc/Courses/Wangxiao233/Wangxiao233_Course.pyc:
-//   https://japi.233.com/ess-ucs-api/doz/members/userInfo
-//   https://japi.233.com/ess-study-api/vkt-course/list
-//   https://japi.233.com/ess-study-api/user-course/list
-//   https://wx.233.com/study/?productId=&childProductId=&versionProductId=&teacherId=
-//   https://vod.{}.aliyuncs.com/?{}      (Aliyun VOD player URL signing)
-//   https://mts.{}.aliyuncs.com/?        (Aliyun media transcoding)
+//
+//	https://japi.233.com/ess-ucs-api/doz/members/userInfo
+//	https://japi.233.com/ess-study-api/vkt-course/list
+//	https://japi.233.com/ess-study-api/user-course/list
+//	https://wx.233.com/study/?productId=&childProductId=&versionProductId=&teacherId=
+//	https://vod.{}.aliyuncs.com/?{}      (Aliyun VOD player URL signing)
+//	https://mts.{}.aliyuncs.com/?        (Aliyun media transcoding)
 //
 // Video playback uses polyv (hls.videocc.net).
 package wangxiao233

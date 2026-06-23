@@ -1,11 +1,11 @@
 // Package icourse163 implements an extractor for www.icourse163.org courses.
 //
 // API chain ported from decompiled Mooc/Courses/Mooc163/Icourse163/Icourse163_Mooc.pyc:
-//   1. Course page         → title, currentTermId, member_id
-//   2. getMocTermDto.dwr   → chapter / lesson / video unit tree (DWR text)
-//   3. getLessonUnitLearnVo.dwr → direct mp4 URL (Shd/Hd/Sd) for each unit
-//   4. resourceRpcBean.getResourceTokenV2.rpc + vod.study.163.com/eds/api/v1/vod/video
-//      fallback chain (md5 signed) when no direct mp4 is exposed
+//  1. Course page         → title, currentTermId, member_id
+//  2. getMocTermDto.dwr   → chapter / lesson / video unit tree (DWR text)
+//  3. getLessonUnitLearnVo.dwr → direct mp4 URL (Shd/Hd/Sd) for each unit
+//  4. resourceRpcBean.getResourceTokenV2.rpc + vod.study.163.com/eds/api/v1/vod/video
+//     fallback chain (md5 signed) when no direct mp4 is exposed
 //
 // Only the most common /course/CID-NNN[?tid=MMM] flow is implemented; kaopei
 // (考研培优) URLs, column/textbook/youdao subsites use distinct flows and are
@@ -40,7 +40,9 @@ const (
 )
 
 // Patterns chosen to intersect with Mooc_Config.courses_re['Icourse163_Mooc']:
-//   \s*https?://www\.icourse163\.org/(?P<mooc>.*?)((learn)|(course))/(?P<cid1>(?!kaopei-)[\%\w-]*-\d+)(.*?tid=(?P<tid1>\d+))?
+//
+//	\s*https?://www\.icourse163\.org/(?P<mooc>.*?)((learn)|(course))/(?P<cid1>(?!kaopei-)[\%\w-]*-\d+)(.*?tid=(?P<tid1>\d+))?
+//
 // Go RE2 has no negative lookahead so the kaopei- exclusion is enforced in code.
 var patterns = []string{
 	`(?:www\.)?icourse163\.org/.*?(?:learn|course)/[%\w-]+-\d+`,

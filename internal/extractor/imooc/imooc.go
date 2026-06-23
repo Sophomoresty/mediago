@@ -2,14 +2,14 @@
 //
 // API chain ported from decompiled Mooc/Courses/Imooc/Imooc_Class.pyc and Imooc_Code.pyc:
 //
-//   1. POST {host}/course/startlearn      (class) or
-//      POST {host}/lesson/ajaxstartlearn  (coding) → heartbeat / open learn session
-//   2. GET  /course/playlist/{mid}?t=m3u8&_id={cid}&cdn=aliyun1
-//                                         or
-//      GET  /lesson/m3u8h5?mid={mid}&cid={cid}&ssl=1&cdn=aliyun1
-//                                         → encoded m3u8 manifest (URLs encoded
-//                                         by JS imooc_decode())
-//   3. POST {host}/course/endlearn / ajaxendlearn → close learn session
+//  1. POST {host}/course/startlearn      (class) or
+//     POST {host}/lesson/ajaxstartlearn  (coding) → heartbeat / open learn session
+//  2. GET  /course/playlist/{mid}?t=m3u8&_id={cid}&cdn=aliyun1
+//     or
+//     GET  /lesson/m3u8h5?mid={mid}&cid={cid}&ssl=1&cdn=aliyun1
+//     → encoded m3u8 manifest (URLs encoded
+//     by JS imooc_decode())
+//  3. POST {host}/course/endlearn / ajaxendlearn → close learn session
 //
 // imooc_decode() runs in a JS sandbox in the original Python source. Without a
 // JS engine we can't decode the URLs, so paid courses return a clear error

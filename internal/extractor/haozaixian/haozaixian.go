@@ -1,14 +1,15 @@
 // Package haozaixian implements an extractor for zuoyebang.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Haozaixian/:
-//   https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getcourseinfo
-//   https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getdetail
-//   https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getvideobyroundid
-//   https://c3-jx-stable.zuoyebang.com/frontcourse/public/courseemphasis/courseemphasisdetail
-//   https://c3-jx-stable.zuoyebang.com/frontcourse/public/lecture/lessonlecture
-//   https://c3-jx-stable.zuoyebang.com/frontcourse/teach/course/pccoursefull
-//   https://c3-jx-stable.zuoyebang.com/frontcourse/teach/course/pccoursefull?courseId=0&appId=winhaoke
-//   https://c3-jx-stable.zuoyebang.com/liveme/student/classroom/pre
+//
+//	https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getcourseinfo
+//	https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getdetail
+//	https://aiclass.zuoyebang.com/aiclass-course/api/lesson/getvideobyroundid
+//	https://c3-jx-stable.zuoyebang.com/frontcourse/public/courseemphasis/courseemphasisdetail
+//	https://c3-jx-stable.zuoyebang.com/frontcourse/public/lecture/lessonlecture
+//	https://c3-jx-stable.zuoyebang.com/frontcourse/teach/course/pccoursefull
+//	https://c3-jx-stable.zuoyebang.com/frontcourse/teach/course/pccoursefull?courseId=0&appId=winhaoke
+//	https://c3-jx-stable.zuoyebang.com/liveme/student/classroom/pre
 package haozaixian
 
 import (

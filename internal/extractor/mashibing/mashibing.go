@@ -1,11 +1,12 @@
 // Package mashibing implements an extractor for mashibing.com (马士兵教育) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Mashibing/:
-//   https://gateway.mashibing.com/uaa/user
-//   https://www.mashibing.com
-//   https://player.polyv.net/secure/{vid}.json    (polyv DRM playback)
-//   https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
-//   https://player.polyv.net/resp/vod-player-drm/canary/next/lib_player.js
+//
+//	https://gateway.mashibing.com/uaa/user
+//	https://www.mashibing.com
+//	https://player.polyv.net/secure/{vid}.json    (polyv DRM playback)
+//	https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
+//	https://player.polyv.net/resp/vod-player-drm/canary/next/lib_player.js
 //
 // Video playback uses polyv DRM (hls.videocc.net + player.polyv.net).
 package mashibing
@@ -18,10 +19,10 @@ import (
 )
 
 const (
-	urlGateway       = "https://gateway.mashibing.com/uaa/user"
-	urlPolyvSecure   = "https://player.polyv.net/secure/{vid}.json"
-	urlPolyvKey      = "https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}"
-	urlPolyvLibJS    = "https://player.polyv.net/resp/vod-player-drm/canary/next/lib_player.js"
+	urlGateway     = "https://gateway.mashibing.com/uaa/user"
+	urlPolyvSecure = "https://player.polyv.net/secure/{vid}.json"
+	urlPolyvKey    = "https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}"
+	urlPolyvLibJS  = "https://player.polyv.net/resp/vod-player-drm/canary/next/lib_player.js"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?mashibing\.com/`}

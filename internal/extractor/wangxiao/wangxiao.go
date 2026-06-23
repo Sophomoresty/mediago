@@ -1,13 +1,14 @@
 // Package wangxiao implements an extractor for k.wangxiao.cn (网校).
 //
 // API chain ported from decompiled Mooc/Courses/Wangxiao/Wangxiao_Course.pyc:
-//   https://k.wangxiao.cn/play?activityid={activity_id}&productsid={product_id}
-//   https://k.wangxiao.cn/item/{item_num}.html
-//   https://ke.wangxiao.cn/apis//products/skuSingleContent
-//   https://k.wangxiao.cn/Course/ProductsDirectory?isfromusercenter=1&ProductsId={product_id}&ordernumber={course_order}
-//   https://k.wangxiao.cn/Course/GetClasshours?cid={course_id}&pid={product_id}
-//   https://users.wangxiao.cn/player/Index.aspx?Id={activity_id}
-//   https://users.wangxiao.cn/player/down.aspx?Id={activity_id}
+//
+//	https://k.wangxiao.cn/play?activityid={activity_id}&productsid={product_id}
+//	https://k.wangxiao.cn/item/{item_num}.html
+//	https://ke.wangxiao.cn/apis//products/skuSingleContent
+//	https://k.wangxiao.cn/Course/ProductsDirectory?isfromusercenter=1&ProductsId={product_id}&ordernumber={course_order}
+//	https://k.wangxiao.cn/Course/GetClasshours?cid={course_id}&pid={product_id}
+//	https://users.wangxiao.cn/player/Index.aspx?Id={activity_id}
+//	https://users.wangxiao.cn/player/down.aspx?Id={activity_id}
 package wangxiao
 
 import (

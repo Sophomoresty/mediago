@@ -4,9 +4,9 @@
 // itself documents that the upstream tool does NOT have reliable course/play
 // API samples for this site:
 //
-//   "医考帮当前仍缺少可靠的课程/播放接口样本，已保留统一结构骨架，暂不提供伪实现。"
-//   (Yikaobang lacks reliable course/play API samples; only the skeleton
-//    is kept. No pseudo-implementation.)
+//	"医考帮当前仍缺少可靠的课程/播放接口样本，已保留统一结构骨架，暂不提供伪实现。"
+//	(Yikaobang lacks reliable course/play API samples; only the skeleton
+//	 is kept. No pseudo-implementation.)
 //
 // We honor that — register the URL pattern and probe https://www.yikaobang.com.cn/
 // home page for liveness only, returning blocked rather than fabricating.

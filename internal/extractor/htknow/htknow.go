@@ -1,14 +1,15 @@
 // Package htknow implements an extractor for htknow.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Htknow/:
-//   https://saas.clientapi.htknow.com/course/column_course_detail
-//   https://saas.clientapi.htknow.com/course/column_course_list
-//   https://saas.clientapi.htknow.com/course/column_play_details
-//   https://saas.clientapi.htknow.com/course/series_course_detail
-//   https://saas.clientapi.htknow.com/course/series_course_list
-//   https://saas.clientapi.htknow.com/course/single_detail
-//   https://saas.clientapi.htknow.com/learn/list_v2
-//   https://saas.clientapi.htknow.com/live/live_wx/playback_list
+//
+//	https://saas.clientapi.htknow.com/course/column_course_detail
+//	https://saas.clientapi.htknow.com/course/column_course_list
+//	https://saas.clientapi.htknow.com/course/column_play_details
+//	https://saas.clientapi.htknow.com/course/series_course_detail
+//	https://saas.clientapi.htknow.com/course/series_course_list
+//	https://saas.clientapi.htknow.com/course/single_detail
+//	https://saas.clientapi.htknow.com/learn/list_v2
+//	https://saas.clientapi.htknow.com/live/live_wx/playback_list
 package htknow
 
 import (

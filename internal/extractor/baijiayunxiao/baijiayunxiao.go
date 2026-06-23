@@ -2,9 +2,10 @@
 // vod replays (used by multiple parent shops like Itbaizhan etc).
 //
 // API endpoints from decompiled Mooc/Courses/Baijiayunxiao/Baijiayun_Video.pyc:
-//   https://api.baijiayun.com/web/playback/getPlayInfo?room_id={}&token={}&use_encrypt=0&render=jsonp
-//   https://www.baijiayun.com/vod/video/getPlayUrl?vid={live_id}&render=jsonp&token={token}&use_encrypt=0
-//   https://www.baijiayun.com
+//
+//	https://api.baijiayun.com/web/playback/getPlayInfo?room_id={}&token={}&use_encrypt=0&render=jsonp
+//	https://www.baijiayun.com/vod/video/getPlayUrl?vid={live_id}&render=jsonp&token={token}&use_encrypt=0
+//	https://www.baijiayun.com
 package baijiayunxiao
 
 import (

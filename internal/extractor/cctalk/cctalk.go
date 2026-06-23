@@ -1,9 +1,10 @@
 // Package cctalk implements an extractor for cctalk.com (沪江CCTalk) groups.
 //
 // API endpoints from decompiled Mooc/Courses/cctalk/Cctalk_Course.pyc:
-//   https://m.cctalk.com/webapi/content/v1.1/user/my_group_list?start={}&limit={}&sortType=1&keyword={}
-//   https://m.cctalk.com/mycourse
-//   https://m.cctalk.com
+//
+//	https://m.cctalk.com/webapi/content/v1.1/user/my_group_list?start={}&limit={}&sortType=1&keyword={}
+//	https://m.cctalk.com/mycourse
+//	https://m.cctalk.com
 package cctalk
 
 import (

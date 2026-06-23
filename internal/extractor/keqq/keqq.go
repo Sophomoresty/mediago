@@ -5,9 +5,10 @@
 // surface a clear "site closed" error to users who still have old links.
 //
 // API endpoints from decompiled Mooc/Courses/Keqq/:
-//   https://ke.qq.com/cgi-proxy/order/get_user_orders?page={}&count=15&tab=0&entrance=web&platform=pc
-//   https://ke.qq.com/cgi-proxy/user/user_center/get_plan_list?count=10&page={}
-//   https://ke.qq.com/course/{}#term_id={}
+//
+//	https://ke.qq.com/cgi-proxy/order/get_user_orders?page={}&count=15&tab=0&entrance=web&platform=pc
+//	https://ke.qq.com/cgi-proxy/user/user_center/get_plan_list?count=10&page={}
+//	https://ke.qq.com/course/{}#term_id={}
 package keqq
 
 import (

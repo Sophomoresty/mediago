@@ -10,10 +10,10 @@ import (
 
 // Endpoints from decompiled Mooc/Courses/Xiaoeapp/:
 const (
-	urlServer        = "https://xiaoeapp-server.xiaoeknow.com"
-	urlCourseCamp    = "https://{shop}/p/course/camp/{course_id}"
-	urlClockIntro    = "https://{shop}/p/t/v1/clock/e_clock/clock_h5/clockIntroduce?activity_id={activity_id}"
-	urlCourseAlive   = "https://{shop}/v3/course/alive/{course_id}?app_id={app_id}&type=2"
+	urlServer      = "https://xiaoeapp-server.xiaoeknow.com"
+	urlCourseCamp  = "https://{shop}/p/course/camp/{course_id}"
+	urlClockIntro  = "https://{shop}/p/t/v1/clock/e_clock/clock_h5/clockIntroduce?activity_id={activity_id}"
+	urlCourseAlive = "https://{shop}/v3/course/alive/{course_id}?app_id={app_id}&type=2"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?xiaoeknow\.com/`}

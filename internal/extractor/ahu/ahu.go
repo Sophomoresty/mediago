@@ -1,9 +1,10 @@
 // Package ahu implements an extractor for ahuyikao.com (安徽医考).
 //
 // API endpoints from decompiled Mooc/Courses/Ahu/:
-//   https://www.ahuyikao.com/
-//   https://www.ahuyikao.com/center/mycourse.html
-//   https://www.ahuyikao.com/course/courseinfo.html?courseId={cid}
+//
+//	https://www.ahuyikao.com/
+//	https://www.ahuyikao.com/center/mycourse.html
+//	https://www.ahuyikao.com/course/courseinfo.html?courseId={cid}
 package ahu
 
 import (

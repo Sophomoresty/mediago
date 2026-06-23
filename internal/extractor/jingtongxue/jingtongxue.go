@@ -1,8 +1,9 @@
 // Package jingtongxue implements an extractor for jingtongxue.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Jingtongxue/:
-//   https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid={siteid}
-//   https://www.jingtongxue.com/s/api
+//
+//	https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid={siteid}
+//	https://www.jingtongxue.com/s/api
 package jingtongxue
 
 import (

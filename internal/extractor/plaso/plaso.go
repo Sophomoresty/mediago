@@ -1,14 +1,15 @@
 // Package plaso implements an extractor for plaso.cn courses.
 //
 // API endpoints from decompiled Mooc/Courses/Plaso/:
-//   https://api.polyv.net/v2/video/5153980715/get-video-info
-//   https://jhpy.plaso.cn/course/api/v1/m/package/list
-//   https://jhpy.plaso.cn/course/api/v1/m/package/student/list
-//   https://jhpy.plaso.cn/course/api/v1/nct/m/package/task/list
-//   https://jhpy.plaso.cn/liveclassgo/api/v1/history/listRecord
-//   https://jhpy.plaso.cn/yxt/servlet/ali/getPlayInfo
-//   https://ppt-player-wwwr.plaso.com/static/ispring/Scripts/player.js?static=1&v=202304150933
-//   https://www.aiwenyun.cn/course/api/v1/m/package/list
+//
+//	https://api.polyv.net/v2/video/5153980715/get-video-info
+//	https://jhpy.plaso.cn/course/api/v1/m/package/list
+//	https://jhpy.plaso.cn/course/api/v1/m/package/student/list
+//	https://jhpy.plaso.cn/course/api/v1/nct/m/package/task/list
+//	https://jhpy.plaso.cn/liveclassgo/api/v1/history/listRecord
+//	https://jhpy.plaso.cn/yxt/servlet/ali/getPlayInfo
+//	https://ppt-player-wwwr.plaso.com/static/ispring/Scripts/player.js?static=1&v=202304150933
+//	https://www.aiwenyun.cn/course/api/v1/m/package/list
 package plaso
 
 import (

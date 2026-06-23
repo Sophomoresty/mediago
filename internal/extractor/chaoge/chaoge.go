@@ -1,14 +1,15 @@
 // Package chaoge implements an extractor for chaogejiaoyu.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Chaoge/:
-//   https://chaogejiaoyu.com/course/index/getCourseDetailAjax?id={cid}&get_offline_info=0
-//   https://chaogejiaoyu.com/course/index/getCourseFileListAjax?course_id={course_id}
-//   https://chaogejiaoyu.com/course/index/getSeriesCourseListAjax?pid={pid}&is_end={is_end}&page={page}&huifang_sort=1&page_size=1000
-//   https://chaogejiaoyu.com/course/room/{course_id}
-//   https://chaogejiaoyu.com/course/{cid}
-//   https://chaogejiaoyu.com/user/index/getLoginUserInfo
-//   https://chaogejiaoyu.com/user/index/getMyCourseListAjax
-//   https://view.csslcloud.net/replay/data/meta
+//
+//	https://chaogejiaoyu.com/course/index/getCourseDetailAjax?id={cid}&get_offline_info=0
+//	https://chaogejiaoyu.com/course/index/getCourseFileListAjax?course_id={course_id}
+//	https://chaogejiaoyu.com/course/index/getSeriesCourseListAjax?pid={pid}&is_end={is_end}&page={page}&huifang_sort=1&page_size=1000
+//	https://chaogejiaoyu.com/course/room/{course_id}
+//	https://chaogejiaoyu.com/course/{cid}
+//	https://chaogejiaoyu.com/user/index/getLoginUserInfo
+//	https://chaogejiaoyu.com/user/index/getMyCourseListAjax
+//	https://view.csslcloud.net/replay/data/meta
 package chaoge
 
 import (

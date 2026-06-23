@@ -2,11 +2,12 @@
 // from the gaodun.com extractor (gaodun is finance/accounting).
 //
 // API endpoints from decompiled Mooc/Courses/Gaotu/:
-//   https://api.gaotu.cn/web/order/pay/shape/list
-//   https://api.gaotu.cn/studyPlatform/v1/unit/clazz/list?isDebounce=true&os=h5-pc&p_client=1
-//   https://interactive.gaotu.cn/live/api/studyCenter/v1/user/pc/clazz/detail
-//   https://api.gaotu.cn/live/zplan/login/videoLive
-//   https://interactive.gaotu.cn/live/api/live/zplan/playbackWeb
+//
+//	https://api.gaotu.cn/web/order/pay/shape/list
+//	https://api.gaotu.cn/studyPlatform/v1/unit/clazz/list?isDebounce=true&os=h5-pc&p_client=1
+//	https://interactive.gaotu.cn/live/api/studyCenter/v1/user/pc/clazz/detail
+//	https://api.gaotu.cn/live/zplan/login/videoLive
+//	https://interactive.gaotu.cn/live/api/live/zplan/playbackWeb
 package gaotuk12
 
 import (

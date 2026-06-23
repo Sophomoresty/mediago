@@ -1,8 +1,9 @@
 // Package yizhiknow implements an extractor for yizhiknow.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Yizhiknow/:
-//   https://curriculum-api.yizhiknow.com
-//   https://user.yizhiknow.com
+//
+//	https://curriculum-api.yizhiknow.com
+//	https://user.yizhiknow.com
 package yizhiknow
 
 import (

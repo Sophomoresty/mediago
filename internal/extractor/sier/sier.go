@@ -1,14 +1,15 @@
 // Package sier implements an extractor for sieredu.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Sier/:
-//   https://api2.sieredu.com/v1/video/c/videoFile/getToken
-//   https://player.sieredu.com
-//   https://player.sieredu.com/
-//   https://player.sieredu.com/open/play?openCourseId=512&source=homeClass
-//   https://playvideo.vodplayvideo.net/getplayinfo/v4/{app_id}/{file_id}
-//   https://study.sieredu.com/
-//   https://www.sieredu.com/web/course/catalog/getCourseCatalogDetail
-//   https://www.sieredu.com/web/course/getProductByCourseId
+//
+//	https://api2.sieredu.com/v1/video/c/videoFile/getToken
+//	https://player.sieredu.com
+//	https://player.sieredu.com/
+//	https://player.sieredu.com/open/play?openCourseId=512&source=homeClass
+//	https://playvideo.vodplayvideo.net/getplayinfo/v4/{app_id}/{file_id}
+//	https://study.sieredu.com/
+//	https://www.sieredu.com/web/course/catalog/getCourseCatalogDetail
+//	https://www.sieredu.com/web/course/getProductByCourseId
 package sier
 
 import (

@@ -1,14 +1,15 @@
 // Package qihang implements an extractor for iqihang.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Qihang/:
-//   https://iqihang.com/api/ark/web/v1/product/{product_id}
-//   https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid=A183AC83A2983CCC
-//   https://view.csslcloud.net/api/record/vod?accountId={user_id}&recordId={record_id}&terminal=3&token={token}
-//   https://view.csslcloud.net/api/room/replay/login?roomid={room_id}&userid={user_id}&recordid={record_id}&viewertoken={uid}%3A{lid}
-//   https://www.iqihang.com/api/ark/web/v1/course/catalog/{cid}
-//   https://www.iqihang.com/api/ark/web/v1/lecture/curriculum/node?curriculumId={cid}
-//   https://www.iqihang.com/api/ark/web/v1/user/course/course-list?isMarketingCourse=&status=&type=1
-//   https://www.iqihang.com/api/ark/web/v1/user/course/live/replay?liveId={live_id}
+//
+//	https://iqihang.com/api/ark/web/v1/product/{product_id}
+//	https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid=A183AC83A2983CCC
+//	https://view.csslcloud.net/api/record/vod?accountId={user_id}&recordId={record_id}&terminal=3&token={token}
+//	https://view.csslcloud.net/api/room/replay/login?roomid={room_id}&userid={user_id}&recordid={record_id}&viewertoken={uid}%3A{lid}
+//	https://www.iqihang.com/api/ark/web/v1/course/catalog/{cid}
+//	https://www.iqihang.com/api/ark/web/v1/lecture/curriculum/node?curriculumId={cid}
+//	https://www.iqihang.com/api/ark/web/v1/user/course/course-list?isMarketingCourse=&status=&type=1
+//	https://www.iqihang.com/api/ark/web/v1/user/course/live/replay?liveId={live_id}
 package qihang
 
 import (

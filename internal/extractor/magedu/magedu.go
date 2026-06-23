@@ -1,9 +1,10 @@
 // Package magedu implements an extractor for edu.magedu.com (马哥教育) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Magedu/:
-//   https://edu.magedu.com/v1/api
-//   https://edu.magedu.com/play/{vid}
-//   https://edu.magedu.com/person/home/0/course
+//
+//	https://edu.magedu.com/v1/api
+//	https://edu.magedu.com/play/{vid}
+//	https://edu.magedu.com/person/home/0/course
 //
 // Video playback uses polyv (hls.videocc.net).
 package magedu

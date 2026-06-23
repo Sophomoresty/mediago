@@ -1,10 +1,11 @@
 // Package youyuan implements an extractor for yijiayk.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Youyuan/:
-//   https://m.yijiayk.com/course-api/app/course/getByCourseId?courseId={}
-//   https://m.yijiayk.com/course-api/app/courseChapter/listPresentOrPrevious?courseId={}&annualValue=0
-//   https://m.yijiayk.com/course-api/app/courseVideo/getToken?chapterId={}&cacheId=0&clientType=pc
-//   https://www.baijiayun.com/vod/video/getPlayUrl?vid={}&token={}
+//
+//	https://m.yijiayk.com/course-api/app/course/getByCourseId?courseId={}
+//	https://m.yijiayk.com/course-api/app/courseChapter/listPresentOrPrevious?courseId={}&annualValue=0
+//	https://m.yijiayk.com/course-api/app/courseVideo/getToken?chapterId={}&cacheId=0&clientType=pc
+//	https://www.baijiayun.com/vod/video/getPlayUrl?vid={}&token={}
 package youyuan
 
 import (

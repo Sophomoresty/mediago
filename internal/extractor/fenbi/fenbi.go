@@ -1,17 +1,18 @@
 // Package fenbi implements an extractor for ke.fenbi.com (粉笔教育) lectures.
 //
 // API chain mapped from decompiled Mooc/Courses/Fenbi/Fenbi_Course.pyc:
-//   Authentication probes:
-//     https://login.fenbi.com/api/users/current
-//     https://ke.fenbi.com/win/v3/users/current?nickname=true
-//   Course tree:
-//     https://ke.fenbi.com/win/{prefix}/v3/my/lectures/visible?start={s}&len={n}
-//     https://ke.fenbi.com/win/{prefix}/v3/lectures/{lecture_id}
-//     https://ke.fenbi.com/api/{prefix}/v3/lectures/{lecture_id}
-//     https://ke.fenbi.com/win/{prefix}/v3/my/lectures/{lecture_id}/summary
-//   The lecture object contains episode IDs that resolve to MP4 URLs through
-//   protected per-prefix endpoints (the prefix encodes the exam vertical:
-//   gaozhi, kuaiji, etc.) — login session + device fingerprint required.
+//
+//	Authentication probes:
+//	  https://login.fenbi.com/api/users/current
+//	  https://ke.fenbi.com/win/v3/users/current?nickname=true
+//	Course tree:
+//	  https://ke.fenbi.com/win/{prefix}/v3/my/lectures/visible?start={s}&len={n}
+//	  https://ke.fenbi.com/win/{prefix}/v3/lectures/{lecture_id}
+//	  https://ke.fenbi.com/api/{prefix}/v3/lectures/{lecture_id}
+//	  https://ke.fenbi.com/win/{prefix}/v3/my/lectures/{lecture_id}/summary
+//	The lecture object contains episode IDs that resolve to MP4 URLs through
+//	protected per-prefix endpoints (the prefix encodes the exam vertical:
+//	gaozhi, kuaiji, etc.) — login session + device fingerprint required.
 //
 // Status: URL parsing implemented; full lecture chain requires session-bound
 // device fingerprint and is left as a follow-up.
@@ -25,12 +26,12 @@ import (
 )
 
 const (
-	urlMyLectures      = "https://ke.fenbi.com/win/{prefix}/v3/my/lectures/visible?start={start}&len={length}"
-	urlLectureDetail   = "https://ke.fenbi.com/win/{prefix}/v3/lectures/{lecture_id}"
-	urlLectureAPI      = "https://ke.fenbi.com/api/{prefix}/v3/lectures/{lecture_id}"
-	urlLectureSummary  = "https://ke.fenbi.com/win/{prefix}/v3/my/lectures/{lecture_id}/summary"
-	urlLogin           = "https://login.fenbi.com/api/users/current"
-	urlUsersCurrent    = "https://ke.fenbi.com/win/v3/users/current?nickname=true"
+	urlMyLectures     = "https://ke.fenbi.com/win/{prefix}/v3/my/lectures/visible?start={start}&len={length}"
+	urlLectureDetail  = "https://ke.fenbi.com/win/{prefix}/v3/lectures/{lecture_id}"
+	urlLectureAPI     = "https://ke.fenbi.com/api/{prefix}/v3/lectures/{lecture_id}"
+	urlLectureSummary = "https://ke.fenbi.com/win/{prefix}/v3/my/lectures/{lecture_id}/summary"
+	urlLogin          = "https://login.fenbi.com/api/users/current"
+	urlUsersCurrent   = "https://ke.fenbi.com/win/v3/users/current?nickname=true"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?fenbi\.com/`}

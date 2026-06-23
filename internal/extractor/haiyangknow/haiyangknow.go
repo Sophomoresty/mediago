@@ -1,10 +1,11 @@
 // Package haiyangknow implements an extractor for haiyangknow.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Haiyangknow/:
-//   https://user.haiyangknow.com
-//   https://user.haiyangknow.com/
-//   https://user.haiyangknow.com/prod-api
-//   https://vod.{}.aliyuncs.com/?{}
+//
+//	https://user.haiyangknow.com
+//	https://user.haiyangknow.com/
+//	https://user.haiyangknow.com/prod-api
+//	https://vod.{}.aliyuncs.com/?{}
 package haiyangknow
 
 import (

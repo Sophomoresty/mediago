@@ -1,10 +1,11 @@
 // Package icourses implements an extractor for icourses.cn (爱课程网).
 //
 // API endpoints from decompiled Mooc/Courses/Icourses/:
-//   https://www.icourses.cn
-//   https://www.icourses.cn/prod/icourse-portal-api
-//   https://www.icourses.cn/videoCourseDetail?courseId={cid}
-//   https://www.icourses.cn/shareCourseDetail?courseId={cid}
+//
+//	https://www.icourses.cn
+//	https://www.icourses.cn/prod/icourse-portal-api
+//	https://www.icourses.cn/videoCourseDetail?courseId={cid}
+//	https://www.icourses.cn/shareCourseDetail?courseId={cid}
 package icourses
 
 import (

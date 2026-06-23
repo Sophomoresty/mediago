@@ -1,8 +1,9 @@
 // Package lexueyun implements an extractor for lexue-cloud.com (乐学云) courses.
 //
 // Endpoints from decompiled Mooc/Courses/Lexueyun/:
-//   https://my.lexue-cloud.com
-//   https://video.sunlands.com/video       (video CDN)
+//
+//	https://my.lexue-cloud.com
+//	https://video.sunlands.com/video       (video CDN)
 package lexueyun
 
 import (

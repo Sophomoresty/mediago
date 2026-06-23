@@ -1,9 +1,10 @@
 // Package minshi implements an extractor for minshiedu.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Minshi/:
-//   https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
-//   https://player.polyv.net/secure/{vid}.json
-//   https://vip.minshiedu.com/#/course/courseHome
+//
+//	https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
+//	https://player.polyv.net/secure/{vid}.json
+//	https://vip.minshiedu.com/#/course/courseHome
 package minshi
 
 import (

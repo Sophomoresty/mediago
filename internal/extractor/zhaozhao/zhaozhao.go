@@ -1,14 +1,15 @@
 // Package zhaozhao implements an extractor for yikao88.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Zhaozhao/:
-//   https://api.yikao88.com/api-order/order/pc/v5/myBuyProductList
-//   https://api.yikao88.com/api-play/play-safe/token
-//   https://api.yikao88.com/api-shop/course/pc/v5/getPackagelistByProduct
-//   https://api.yikao88.com/api-shop/course/pc/v5/getPlaySafe
-//   https://api.yikao88.com/api-shop/course/pc/v5/getPlayToken
-//   https://api.yikao88.com/api-shop/course/pc/v5/getPlayTokenByVideoId
-//   https://api.yikao88.com/api-shop/course/pc/v5/getPolyvPlaySafe
-//   https://api.yikao88.com/api-shop/course/pc/v5/getVideoPlayToken
+//
+//	https://api.yikao88.com/api-order/order/pc/v5/myBuyProductList
+//	https://api.yikao88.com/api-play/play-safe/token
+//	https://api.yikao88.com/api-shop/course/pc/v5/getPackagelistByProduct
+//	https://api.yikao88.com/api-shop/course/pc/v5/getPlaySafe
+//	https://api.yikao88.com/api-shop/course/pc/v5/getPlayToken
+//	https://api.yikao88.com/api-shop/course/pc/v5/getPlayTokenByVideoId
+//	https://api.yikao88.com/api-shop/course/pc/v5/getPolyvPlaySafe
+//	https://api.yikao88.com/api-shop/course/pc/v5/getVideoPlayToken
 package zhaozhao
 
 import (

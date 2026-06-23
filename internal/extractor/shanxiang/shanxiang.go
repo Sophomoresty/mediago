@@ -1,14 +1,15 @@
 // Package shanxiang implements an extractor for sx1211.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Shanxiang/:
-//   https://view.csslcloud.net/replay/data/meta
-//   https://view.csslcloud.net/replay/user/login
-//   https://view.csslcloud.net/replay/video/play
-//   https://www.sx1211.com/User/getAjaxCourseList
-//   https://www.sx1211.com/course/docview.html?product_id={cid}&doc_id={doc_id}
-//   https://www.sx1211.com/course/playbackView?id={playback_id}&skuId={sku_id}&scheduleId={schedule_id}
-//   https://www.sx1211.com/course/study.html?id={cid}&skuId={sku_id}
-//   https://www.sx1211.com/user/course.html
+//
+//	https://view.csslcloud.net/replay/data/meta
+//	https://view.csslcloud.net/replay/user/login
+//	https://view.csslcloud.net/replay/video/play
+//	https://www.sx1211.com/User/getAjaxCourseList
+//	https://www.sx1211.com/course/docview.html?product_id={cid}&doc_id={doc_id}
+//	https://www.sx1211.com/course/playbackView?id={playback_id}&skuId={sku_id}&scheduleId={schedule_id}
+//	https://www.sx1211.com/course/study.html?id={cid}&skuId={sku_id}
+//	https://www.sx1211.com/user/course.html
 package shanxiang
 
 import (

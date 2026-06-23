@@ -1,7 +1,8 @@
 // Package enetedu implements an extractor for enetedu.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Enetedu/:
-//   https://www.enetedu.com/site/course/liveCourseDetails?id=2033384670799990785
+//
+//	https://www.enetedu.com/site/course/liveCourseDetails?id=2033384670799990785
 package enetedu
 
 import (

@@ -1,12 +1,13 @@
 // Package koolearn implements an extractor for koolearn.com (新东方在线).
 //
 // API endpoints from decompiled Mooc/Courses/Koolearn/:
-//   https://www.koolearn.com
-//   https://order.koolearn.com/ordercenter/user_order/index?status=1&page={}
-//   https://study.koolearn.com
-//   https://study.koolearn.com/my-data?type={type}
-//   https://i.koolearn.com/logininfo
-//   https://api.roombox.xdf.cn/api/login/fetchToken/{}     (roombox playback token)
+//
+//	https://www.koolearn.com
+//	https://order.koolearn.com/ordercenter/user_order/index?status=1&page={}
+//	https://study.koolearn.com
+//	https://study.koolearn.com/my-data?type={type}
+//	https://i.koolearn.com/logininfo
+//	https://api.roombox.xdf.cn/api/login/fetchToken/{}     (roombox playback token)
 package koolearn
 
 import (
@@ -17,12 +18,12 @@ import (
 )
 
 const (
-	urlHome        = "https://www.koolearn.com"
-	urlOrderIndex  = "https://order.koolearn.com/ordercenter/user_order/index?status=1&page={page}"
-	urlStudyHome   = "https://study.koolearn.com"
-	urlMyData      = "https://study.koolearn.com/my-data?type={type}"
-	urlLoginInfo   = "https://i.koolearn.com/logininfo"
-	urlFetchToken  = "https://api.roombox.xdf.cn/api/login/fetchToken/{user_id}"
+	urlHome       = "https://www.koolearn.com"
+	urlOrderIndex = "https://order.koolearn.com/ordercenter/user_order/index?status=1&page={page}"
+	urlStudyHome  = "https://study.koolearn.com"
+	urlMyData     = "https://study.koolearn.com/my-data?type={type}"
+	urlLoginInfo  = "https://i.koolearn.com/logininfo"
+	urlFetchToken = "https://api.roombox.xdf.cn/api/login/fetchToken/{user_id}"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?koolearn\.com/`}

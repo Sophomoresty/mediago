@@ -1,11 +1,12 @@
 // Package xueersi implements an extractor for xueersi.com (好未来学而思) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Xueersi/:
-//   https://api.xueersi.com/login/V1/Web/checkLogin?X-Businessline-Id=10
-//   https://i.xueersi.com/janus/App/StudyCenter/v2/courseList
-//   http://i.xueersi.com/icenter-go/App/StudyCenter/MyCourse/stuCourseList
-//   http://i.xueersi.com/icenter-go/App/StudyCenter/MyPlans/planListV2
-//   http://studentlive.xueersi.com/v1/student/classroom/playback/enter
+//
+//	https://api.xueersi.com/login/V1/Web/checkLogin?X-Businessline-Id=10
+//	https://i.xueersi.com/janus/App/StudyCenter/v2/courseList
+//	http://i.xueersi.com/icenter-go/App/StudyCenter/MyCourse/stuCourseList
+//	http://i.xueersi.com/icenter-go/App/StudyCenter/MyPlans/planListV2
+//	http://studentlive.xueersi.com/v1/student/classroom/playback/enter
 package xueersi
 
 import (

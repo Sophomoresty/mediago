@@ -1,14 +1,15 @@
 // Package aishangke implements an extractor for loveshangke.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Aishangke/:
-//   https://loveshangke.com/course/g{cid}
-//   https://loveshangke.com/course/index/enterCourse?course_id={course_id}
-//   https://loveshangke.com/course/index/getCourseDetailAjax?id={cid}
-//   https://loveshangke.com/course/index/getMultipleSeriesCourseListAjax?pid={pid}&is_end={is_end}&page={page}&tid=0&sid=0
-//   https://loveshangke.com/course/{cid}
-//   https://loveshangke.com/user/index/getLoginUserInfo
-//   https://loveshangke.com/user/index/getMyCourseListAjax
-//   https://view.csslcloud.net/replay/user/login
+//
+//	https://loveshangke.com/course/g{cid}
+//	https://loveshangke.com/course/index/enterCourse?course_id={course_id}
+//	https://loveshangke.com/course/index/getCourseDetailAjax?id={cid}
+//	https://loveshangke.com/course/index/getMultipleSeriesCourseListAjax?pid={pid}&is_end={is_end}&page={page}&tid=0&sid=0
+//	https://loveshangke.com/course/{cid}
+//	https://loveshangke.com/user/index/getLoginUserInfo
+//	https://loveshangke.com/user/index/getMyCourseListAjax
+//	https://view.csslcloud.net/replay/user/login
 package aishangke
 
 import (

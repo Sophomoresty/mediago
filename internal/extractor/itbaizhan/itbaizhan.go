@@ -1,9 +1,10 @@
 // Package itbaizhan implements an extractor for itbaizhan.com (百战程序员) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Itbaizhan/:
-//   https://www.itbaizhan.com/index/stage/navlist?id={course_id}&stage=0
-//   https://www.itbaizhan.com/index/stage/rightlist?id={stage_id}
-//   https://www.itbaizhan.com/course/id/{course_id}.html
+//
+//	https://www.itbaizhan.com/index/stage/navlist?id={course_id}&stage=0
+//	https://www.itbaizhan.com/index/stage/rightlist?id={stage_id}
+//	https://www.itbaizhan.com/course/id/{course_id}.html
 //
 // Video playback uses polyv (hls.videocc.net).
 package itbaizhan

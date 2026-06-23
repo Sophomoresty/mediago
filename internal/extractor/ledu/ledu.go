@@ -1,9 +1,10 @@
 // Package ledu implements an extractor for ledupeiyou.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Ledu/:
-//   https://classroom-api-online.saasp.vdyoo.com
-//   https://classroom-api.ledupeiyou.com
-//   https://course-api-online.saasp.vdyoo.com
+//
+//	https://classroom-api-online.saasp.vdyoo.com
+//	https://classroom-api.ledupeiyou.com
+//	https://course-api-online.saasp.vdyoo.com
 package ledu
 
 import (

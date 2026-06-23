@@ -1,9 +1,10 @@
 // Package yangcong implements an extractor for yangcongxueyuan.com / yangcong345.com (洋葱学院).
 //
 // API endpoints from decompiled Mooc/Courses/Yangcong/:
-//   https://school.yangcongxueyuan.com/
-//   https://school-api.yangcong345.com/me
-//   https://school-api.yangcong345.com  (course tree + lesson detail)
+//
+//	https://school.yangcongxueyuan.com/
+//	https://school-api.yangcong345.com/me
+//	https://school-api.yangcong345.com  (course tree + lesson detail)
 package yangcong
 
 import (

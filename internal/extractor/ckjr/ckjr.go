@@ -1,8 +1,9 @@
 // Package ckjr implements an extractor for ckjr001.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Ckjr/:
-//   https://kpapiop.ckjr001.com
-//   https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
+//
+//	https://kpapiop.ckjr001.com
+//	https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
 package ckjr
 
 import (

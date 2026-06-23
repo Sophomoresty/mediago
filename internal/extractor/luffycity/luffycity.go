@@ -1,10 +1,11 @@
 // Package luffycity implements an extractor for luffycity.com (路飞学城) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Luffycity/:
-//   https://www.luffycity.com
-//   https://api.luffycity.com/api/v1
-//   https://hcdn2.luffycity.com   (CDN)
-//   https://mts.{}.aliyuncs.com/?  (Aliyun Media Transcoding signed playback)
+//
+//	https://www.luffycity.com
+//	https://api.luffycity.com/api/v1
+//	https://hcdn2.luffycity.com   (CDN)
+//	https://mts.{}.aliyuncs.com/?  (Aliyun Media Transcoding signed playback)
 //
 // Video playback uses polyv (hls.videocc.net) for some courses.
 package luffycity
@@ -17,9 +18,9 @@ import (
 )
 
 const (
-	urlHome  = "https://www.luffycity.com"
-	urlAPI   = "https://api.luffycity.com/api/v1"
-	urlCDN   = "https://hcdn2.luffycity.com"
+	urlHome = "https://www.luffycity.com"
+	urlAPI  = "https://api.luffycity.com/api/v1"
+	urlCDN  = "https://hcdn2.luffycity.com"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?luffycity\.com/`}

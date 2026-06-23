@@ -1,14 +1,15 @@
 // Package wallstreets implements an extractor for wallstreets.cn courses.
 //
 // API endpoints from decompiled Mooc/Courses/Wallstreets/:
-//   https://play.qiqiuyun.net/sdk_api/play?resNo={resno}&token={token}&ssl=1&sdkType=js&lang=zh-CN
-//   https://wallstreets.cn/api/me/courses?title=&limit=12&offset=0&type=learning
-//   https://wallstreets.cn/api/me/courses?title=&limit=12&offset={offset}&type={ctype}
-//   https://wallstreets.cn/classroom/{classroom_id}/courses
-//   https://wallstreets.cn/course/{cid}/task/list/render/default
-//   https://wallstreets.cn/course/{cid}/task/{vid}/activity_show
-//   https://wallstreets.cn/esbar/my/classroom
-//   https://wallstreets.cn/my/classrooms
+//
+//	https://play.qiqiuyun.net/sdk_api/play?resNo={resno}&token={token}&ssl=1&sdkType=js&lang=zh-CN
+//	https://wallstreets.cn/api/me/courses?title=&limit=12&offset=0&type=learning
+//	https://wallstreets.cn/api/me/courses?title=&limit=12&offset={offset}&type={ctype}
+//	https://wallstreets.cn/classroom/{classroom_id}/courses
+//	https://wallstreets.cn/course/{cid}/task/list/render/default
+//	https://wallstreets.cn/course/{cid}/task/{vid}/activity_show
+//	https://wallstreets.cn/esbar/my/classroom
+//	https://wallstreets.cn/my/classrooms
 package wallstreets
 
 import (

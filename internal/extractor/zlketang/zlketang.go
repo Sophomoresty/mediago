@@ -1,14 +1,15 @@
 // Package zlketang implements an extractor for zlketang.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Zlketang/:
-//   https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
-//   https://www.zlketang.com/public/wxpub/page/zl_course/commodity.html?product_id={}
-//   https://www.zlketang.com/wxpub/api/course
-//   https://www.zlketang.com/wxpub/api/course_detail
-//   https://www.zlketang.com/wxpub/api/course_video_switchv2
-//   https://www.zlketang.com/wxpub/api/goods_detailv3
-//   https://www.zlketang.com/wxpub/api/live_detail
-//   https://www.zlketang.com/wxpub/api/orderv2
+//
+//	https://playvideo.qcloud.com/getplayinfo/v4/{}/{}
+//	https://www.zlketang.com/public/wxpub/page/zl_course/commodity.html?product_id={}
+//	https://www.zlketang.com/wxpub/api/course
+//	https://www.zlketang.com/wxpub/api/course_detail
+//	https://www.zlketang.com/wxpub/api/course_video_switchv2
+//	https://www.zlketang.com/wxpub/api/goods_detailv3
+//	https://www.zlketang.com/wxpub/api/live_detail
+//	https://www.zlketang.com/wxpub/api/orderv2
 package zlketang
 
 import (

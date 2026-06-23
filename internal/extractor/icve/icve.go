@@ -1,10 +1,11 @@
 // Package icve implements an extractor for icve.com.cn (智慧职教) courses.
 //
 // API endpoints from decompiled Mooc/Courses/Icve/:
-//   https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId={cid}
-//   https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId={inf_id}&courseId={cid}
-//   https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=&courseId=&parentId=
-//   https://upload.icve.com.cn/{content}/status
+//
+//	https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId={cid}
+//	https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId={inf_id}&courseId={cid}
+//	https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=&courseId=&parentId=
+//	https://upload.icve.com.cn/{content}/status
 package icve
 
 import (

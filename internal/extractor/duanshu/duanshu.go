@@ -1,8 +1,9 @@
 // Package duanshu implements an extractor for {shop}.duanshu.com (短书) shops.
 //
 // Endpoints from decompiled Mooc/Courses/Duanshu/:
-//   https://{shop}.duanshu.com   (article + audio + video flows)
-//   https://cupsj.duanshu.com/#/brief/{type}/{id}
+//
+//	https://{shop}.duanshu.com   (article + audio + video flows)
+//	https://cupsj.duanshu.com/#/brief/{type}/{id}
 package duanshu
 
 import (

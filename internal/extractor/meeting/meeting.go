@@ -1,8 +1,9 @@
 // Package meeting implements an extractor for meeting.tencent.com (腾讯会议) replays.
 //
 // URL pattern from decompiled Mooc/Courses/Meeting/:
-//   https?://meeting\.tencent\.com/(?:(?:cw)|(?:cr?m)|(?:ctm?))/(?P<id>[\w-]+)
-//   https?://meeting\.tencent\.com/.*?/share.*?id=(?P<id>[\w-]+)
+//
+//	https?://meeting\.tencent\.com/(?:(?:cw)|(?:cr?m)|(?:ctm?))/(?P<id>[\w-]+)
+//	https?://meeting\.tencent\.com/.*?/share.*?id=(?P<id>[\w-]+)
 package meeting
 
 import (

@@ -1,10 +1,10 @@
 // Package xuetang implements an extractor for next.xuetangx.com courses.
 //
 // API chain ported from decompiled Mooc/Courses/Xuetang/Xuetang_Course.pyc:
-//   1. /api/v1/lms/learn/product/info?cid=&sign=    → classroom_name (course title)
-//   2. /api/v1/lms/learn/course/chapter?cid=&sign=  → section/leaf tree (chapter list)
-//   3. /api/v1/lms/learn/leaf_info/{cid}/{leaf_id}/?sign={sign} → content_info.media.ccid
-//   4. /api/v1/lms/service/playurl/{ccid}/?appid=10000 → data.sources.quality10/quality20 (mp4 URLs)
+//  1. /api/v1/lms/learn/product/info?cid=&sign=    → classroom_name (course title)
+//  2. /api/v1/lms/learn/course/chapter?cid=&sign=  → section/leaf tree (chapter list)
+//  3. /api/v1/lms/learn/leaf_info/{cid}/{leaf_id}/?sign={sign} → content_info.media.ccid
+//  4. /api/v1/lms/service/playurl/{ccid}/?appid=10000 → data.sources.quality10/quality20 (mp4 URLs)
 //
 // Sign + cid are pulled out of the URL ("/course/SIGN/CID" or "/learn[/space]/SIGN/.../CID").
 // Supports xuetangx.com, cmgemooc.com, gradsmartedu.cn.
@@ -26,8 +26,9 @@ var patterns = []string{
 }
 
 // URL forms ported from Mooc_Config.courses_re['Xuetang_Course']:
-//   /course/{sign}/{cid}
-//   /learn[/space]/{sign}/.../{cid}
+//
+//	/course/{sign}/{cid}
+//	/learn[/space]/{sign}/.../{cid}
 var (
 	urlCourseRe = regexp.MustCompile(`https?://([^/]+)/.*?course/([^/]+)/(\d+)`)
 	urlLearnRe  = regexp.MustCompile(`https?://([^/]+)/.*?learn(?:/space)?/([^/]+)/.*?/(\d+)`)
@@ -142,8 +143,9 @@ func (x *Xuetang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 }
 
 // getVideoURL implements _get_signature → _get_video_url:
-//   leaf_info/{cid}/{leaf}/?sign={sign} → data.content_info.media.ccid
-//   service/playurl/{ccid}/?appid=10000 → data.sources.quality10/20 (mp4 URLs)
+//
+//	leaf_info/{cid}/{leaf}/?sign={sign} → data.content_info.media.ccid
+//	service/playurl/{ccid}/?appid=10000 → data.sources.quality10/20 (mp4 URLs)
 func getVideoURL(c *util.Client, base string, h map[string]string, sign, cid, leafID string) string {
 	leafURL := fmt.Sprintf("%s/api/v1/lms/learn/leaf_info/%s/%s/?sign=%s", base, cid, leafID, sign)
 	body, err := c.GetString(leafURL, h)

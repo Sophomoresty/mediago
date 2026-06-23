@@ -1,7 +1,8 @@
 // Package zhengbao implements an extractor for chinaacc.com courses.
 //
 // API endpoints from decompiled Mooc/Courses/Zhengbao/:
-//   https://elearning.chinaacc.com/xcware/myhome/teachingMaterials.shtm?cwareIDs={cware_id}&identity={identity}
+//
+//	https://elearning.chinaacc.com/xcware/myhome/teachingMaterials.shtm?cwareIDs={cware_id}&identity={identity}
 package zhengbao
 
 import (
