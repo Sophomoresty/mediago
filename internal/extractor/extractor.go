@@ -10,7 +10,16 @@ type MediaInfo struct {
 	Chapters  []Chapter         `json:"chapters,omitempty"`
 	Subtitles []Subtitle        `json:"subtitles,omitempty"`
 	Extra     map[string]any    `json:"extra,omitempty"`
+
+	// Entries holds child media items when this MediaInfo represents a
+	// playlist/course (multi-video). Each entry is a standalone downloadable
+	// item with its own Streams. When Entries is non-empty the top-level
+	// Streams map is typically empty and Title is the course/playlist title.
+	Entries []*MediaInfo `json:"entries,omitempty"`
 }
+
+// IsPlaylist reports whether this MediaInfo is a multi-item course/playlist.
+func (m *MediaInfo) IsPlaylist() bool { return len(m.Entries) > 0 }
 
 type Stream struct {
 	Quality   string            `json:"quality"`

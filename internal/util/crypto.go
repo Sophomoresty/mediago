@@ -3,13 +3,22 @@ package util
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 )
+
+// MD5 returns the lowercase hex md5 digest of s. Matches the Python source's
+// Mooc_Crypt.md5(), used for request signing on several sites.
+func MD5(s string) string {
+	sum := md5.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 func AESDecryptCBC(data, key, iv []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)

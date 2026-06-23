@@ -5,6 +5,8 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -64,6 +66,33 @@ func (c *Client) GetString(url string, headers map[string]string) (string, error
 
 func (c *Client) Post(url string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	return c.do("POST", url, body, headers)
+}
+
+// PostForm sends an application/x-www-form-urlencoded POST and returns the body
+// as a string. This matches the Python source's request_post(), which encodes
+// data via urllib.parse.urlencode — used by every DWR/RPC-based site.
+func (c *Client) PostForm(u string, data map[string]string, headers map[string]string) (string, error) {
+	form := url.Values{}
+	for k, v := range data {
+		form.Set(k, v)
+	}
+	h := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+	for k, v := range headers {
+		h[k] = v
+	}
+	resp, err := c.Post(u, strings.NewReader(form.Encode()), h)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, u)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (c *Client) do(method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
