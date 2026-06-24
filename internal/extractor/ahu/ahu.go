@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/nichuanfang/medigo/internal/extractor/shared"
 	"github.com/nichuanfang/medigo/internal/util"
 )
 
@@ -155,9 +156,20 @@ func resolveLesson(c *util.Client, headers map[string]string, cid, lessonID stri
 		}
 	}
 
+	// Baijiayun playback flow (source _download_baijiayun_playback):
+	// extract hlsToken/playId from page, call shared.BaijiayunResolvePlayback.
+	hlsToken := jsVar(body, "hlsToken")
+	roomID := firstNonEmpty(jsVar(body, "roomId"), jsVar(body, "room_id"))
+	if hlsToken != "" && roomID != "" {
+		playbackURL, err := shared.BaijiayunResolvePlayback(c, roomID, hlsToken, playHeaders)
+		if err == nil && playbackURL != "" {
+			return mediaStream(playbackURL, playHeaders), nil
+		}
+	}
+
 	// Source also records hlsToken/playId/baijiayun markers; if no direct or
-	// Aliyun media URL is present, there is no downloadable stream to expose.
-	return extractor.Stream{}, fmt.Errorf("ahu: no direct or aliyun media URL for lesson %s", lessonID)
+	// Aliyun or Baijiayun media URL is present, there is no downloadable stream.
+	return extractor.Stream{}, fmt.Errorf("ahu: no direct/aliyun/baijiayun media URL for lesson %s", lessonID)
 }
 
 type aliyunPlayAuth struct {

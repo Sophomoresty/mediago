@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/nichuanfang/medigo/internal/extractor/shared"
 	"github.com/nichuanfang/medigo/internal/util"
 )
 
@@ -271,6 +272,22 @@ func resolveAuth(c *util.Client, auth map[string]string, h map[string]string) (m
 			return m, nil
 		}
 	}
+
+	// Aliyun VOD flow: if playAuth decoded to AccessKeyId/Secret/Token, sign
+	// a GetPlayInfo request via shared.AliyunResolvePlayInfo (source _request_aliyun_play_info_by_rand).
+	if auth["vod_video_id"] != "" && auth["access_key_id"] != "" {
+		payload := shared.AliyunPlayPayload{
+			AccessKeyID:     auth["access_key_id"],
+			AccessKeySecret: auth["access_key_secret"],
+			SecurityToken:   auth["sts_token"],
+			Region:          firstNonEmpty(auth["region"], "cn-shanghai"),
+			AuthInfo:        auth["auth_info"],
+		}
+		if info, err := shared.AliyunResolvePlayInfo(c, payload, auth["vod_video_id"], shared.AliyunPlayOptions{Headers: h}); err == nil && info.URL != "" {
+			return media{URL: info.URL}, nil
+		}
+	}
+
 	if auth["play_url"] != "" {
 		return mediaFromText(auth["play_url"]), nil
 	}

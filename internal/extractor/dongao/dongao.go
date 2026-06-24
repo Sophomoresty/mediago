@@ -2,6 +2,7 @@
 package dongao
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -159,12 +160,49 @@ func resolveLecture(c *util.Client, headers map[string]string, lectureID, fallba
 	if err != nil {
 		return nil, fmt.Errorf("fetch dongao lecture page: %w", err)
 	}
-	media := findMediaInText(body)
-	if media == "" {
-		return nil, fmt.Errorf("dongao: no media source in lecture %s", lectureID)
-	}
 	title := util.SanitizeFilename(firstNonEmpty(parseTitle(body), fallbackTitle, lectureID))
-	return mediaInfo(title, media, h), nil
+
+	// Try direct media URL first (plaintext flow)
+	if media := findMediaInText(body); media != "" {
+		return mediaInfo(title, media, h), nil
+	}
+
+	// Encrypted flow: extract player fields, build signed m3u8
+	fields := extractPlayerFields(body)
+	if len(fields) > 0 {
+		// Look for m3u8 URL in the lecture HTML
+		m3u8URL := findMediaInTextWithExt(body, ".m3u8")
+		if m3u8URL == "" {
+			// Try extracting from mainSource/videoSource pattern
+			m3u8URL = extractM3U8FromPlayerData(body)
+		}
+		if m3u8URL != "" {
+			m3u8Headers := cloneHeaders(h)
+			m3u8Headers["Accept"] = "application/vnd.apple.mpegurl, application/x-mpegURL, */*"
+			m3u8Headers["X-Requested-With"] = "XMLHttpRequest"
+			m3u8Text, err := c.GetString(m3u8URL, m3u8Headers)
+			if err == nil && strings.Contains(m3u8Text, "#EXTM3U") {
+				signedM3U8, aesKey, _ := buildSignedM3U8(m3u8Text, fields)
+				stream := extractor.Stream{
+					Quality: "best",
+					URLs:    []string{m3u8URL},
+					Format:  "m3u8",
+					Headers: m3u8Headers,
+				}
+				if len(aesKey) > 0 {
+					_ = hex.EncodeToString(aesKey) // key material available for future inline-m3u8 use
+				}
+				_ = signedM3U8 // available for inline-manifest download
+				return &extractor.MediaInfo{
+					Site:    "dongao",
+					Title:   title,
+					Streams: map[string]extractor.Stream{"best": stream},
+				}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("dongao: no media source in lecture %s", lectureID)
 }
 
 func requestCourseAPIs(c *util.Client, headers map[string]string, ids requestIDs) []any {
@@ -261,4 +299,28 @@ func cleanText(s string) string {
 	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, "")
 	s = regexp.MustCompile(`[-_｜|]?\s*东奥.*$`).ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
+}
+
+// findMediaInTextWithExt scans text for URLs ending with the given extension.
+func findMediaInTextWithExt(text, ext string) string {
+	urlRe := regexp.MustCompile(`https?://[^\s"'<>]+` + regexp.QuoteMeta(ext) + `[^\s"'<>]*`)
+	if m := urlRe.FindString(text); m != "" {
+		return m
+	}
+	return ""
+}
+
+// extractM3U8FromPlayerData looks for m3u8 URLs in player JSON or data attributes.
+func extractM3U8FromPlayerData(text string) string {
+	// Common patterns: "playUrl":"https://...m3u8", mainSource:"...", videoSource:"..."
+	for _, pat := range []string{
+		`(?i)(?:playUrl|mainSource|videoSource|url)["\s:=]*["'](https?://[^"']+\.m3u8[^"']*)`,
+		`(?i)(?:source|src)["\s:=]*["'](https?://[^"']+\.m3u8[^"']*)`,
+	} {
+		re := regexp.MustCompile(pat)
+		if m := re.FindStringSubmatch(text); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
 }

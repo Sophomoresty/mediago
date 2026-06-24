@@ -244,14 +244,6 @@ func walkJSON(v any, fn func(map[string]any)) {
 	}
 }
 
-func firstString(m map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v := strings.TrimSpace(fmt.Sprint(m[k])); v != "" && v != "<nil>" {
-			return v
-		}
-	}
-	return ""
-}
 
 func normalizeURL(raw, base string) string {
 	raw = strings.TrimSpace(raw)
@@ -281,13 +273,123 @@ func wangxiaoHeaders(referer string) map[string]string {
 func isLoginPage(text string) bool {
 	return strings.Contains(text, "user.wangxiao.cn/login") || strings.Contains(text, "中大网校会员中心-登陆入口-中大网校") || strings.Contains(text, "/views/login/index.js")
 }
-func cleanText(s string) string {
-	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, " ")
-	return strings.Join(strings.Fields(html.UnescapeString(s)), " ")
-}
 func formatFromURL(u string) string {
 	if strings.Contains(strings.ToLower(u), ".m3u8") {
 		return "m3u8"
 	}
 	return "mp4"
+}
+
+// fetchUserClasshours fetches ProductsDirectory + GetClasshours to get the
+// user's purchased course catalog. Source _parse_user_classhours: parse HTML
+// <li> tags from GetClasshours response → lesson links.
+func fetchUserClasshours(c *util.Client, productID, orderNumber, courseID string, headers map[string]string) ([]lessonRef, error) {
+	h := cloneMap(headers)
+	// Step 1: ProductsDirectory → get ordernumber if missing
+	if orderNumber == "" {
+		dirURL := fmt.Sprintf(urlDirectory, productID, "")
+		body, err := c.GetString(dirURL, h)
+		if err == nil {
+			orderNumber = extractOrderNumber(body)
+		}
+	}
+	if orderNumber == "" {
+		return nil, fmt.Errorf("wangxiao: cannot determine ordernumber")
+	}
+
+	// Step 2: GetClasshours → parse lesson list
+	classURL := fmt.Sprintf(urlClasshours, courseID, productID)
+	body, err := c.GetString(classURL, h)
+	if err != nil {
+		return nil, fmt.Errorf("wangxiao GetClasshours: %w", err)
+	}
+	return parseClasshourLinks(body, productID), nil
+}
+
+// parseClasshourLinks extracts lesson links from GetClasshours HTML.
+// Source _parse_user_classhours: finds <li> elements with lesson links.
+func parseClasshourLinks(html, productID string) []lessonRef {
+	var refs []lessonRef
+	liRe := regexp.MustCompile(`(?is)<li[^>]*>(.*?)</li>`)
+	linkRe := regexp.MustCompile(`(?i)href=["']([^"']*player[^"']*)["']`)
+	titleRe := regexp.MustCompile(`(?is)<(?:a|span)[^>]*>(.*?)</(?:a|span)>`)
+	for _, li := range liRe.FindAllString(html, -1) {
+		linkMatch := linkRe.FindStringSubmatch(li)
+		if linkMatch == nil {
+			continue
+		}
+		title := ""
+		if tm := titleRe.FindStringSubmatch(li); len(tm) > 1 {
+			title = cleanText(tm[1])
+		}
+		refs = append(refs, lessonRef{
+			Title:    title,
+			URL:      linkMatch[1],
+			ActivityID: firstGroup(activityRe, linkMatch[1]),
+			ProductID: productID,
+			Legacy:    strings.Contains(linkMatch[1], "users.wangxiao.cn"),
+		})
+	}
+	return refs
+}
+
+// resolveFileResource fetches handout/file download URLs from lesson page.
+// Source _resolve_file_resource: extracts file_url from lesson page JSON,
+// downloads via DownHandOut endpoint.
+func resolveFileResource(c *util.Client, activityID string, headers map[string]string) []string {
+	if activityID == "" {
+		return nil
+	}
+	// Try live handout endpoint
+	handoutURL := fmt.Sprintf(urlLiveHandout, activityID)
+	body, err := c.GetString(handoutURL, headers)
+	if err == nil && body != "" {
+		// Response may be a redirect URL or JSON with file_url
+		if fileURL := extractFileURL(body); fileURL != "" {
+			return []string{fileURL}
+		}
+	}
+	return nil
+}
+
+func extractOrderNumber(html string) string {
+	re := regexp.MustCompile(`(?i)ordernumber\s*[=:]\s*["']([^"']+)["']`)
+	if m := re.FindStringSubmatch(html); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func extractFileURL(text string) string {
+	re := regexp.MustCompile(`https?://[^\s"'<>]+\.(?:pdf|doc|docx|mp4|mp3|zip)[^\s"'<>]*`)
+	if urls := re.FindAllString(text, -1); len(urls) > 0 {
+		return urls[0]
+	}
+	return ""
+}
+
+func cloneMap(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func cleanText(s string) string {
+	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+
+
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
