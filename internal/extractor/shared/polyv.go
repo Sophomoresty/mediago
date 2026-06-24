@@ -3,12 +3,12 @@
 // Jinbangshidai, Plaso, Youyuan, Orangevip, Zhaozhao (~16 sites).
 //
 // Non-DRM polyv playback chain ported from Mashibing_Base.pyc constants:
-//   1. GET  https://player.polyv.net/secure/{vid}.json
-//          → returns { code: 200, data: { playsafe: { token }, paths: [...], dur } }
-//   2. Manifest URL: https://hls.videocc.net/{path1}/{path2}/{vid}_{bitrate}.m3u8
-//      (path1/path2 derived from vid; bitrate from polyv's quality picker)
-//   3. EXT-X-KEY URI in manifest must be re-fetched with the playsafe token:
-//      https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
+//  1. GET  https://player.polyv.net/secure/{vid}.json
+//     → returns { code: 200, data: { playsafe: { token }, paths: [...], dur } }
+//  2. Manifest URL: https://hls.videocc.net/{path1}/{path2}/{vid}_{bitrate}.m3u8
+//     (path1/path2 derived from vid; bitrate from polyv's quality picker)
+//  3. EXT-X-KEY URI in manifest must be re-fetched with the playsafe token:
+//     https://hls.videocc.net/playsafe/{path1}/{path2}/{vid}_{bitrate}.key?token={token}
 //
 // DRM polyv (the `vod-player-drm/canary/next/lib_player.js` flow used by
 // Mashibing premium courses) needs a JS sandbox to decrypt the per-session

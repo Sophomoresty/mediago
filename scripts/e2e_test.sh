@@ -58,7 +58,7 @@ fi
 
 # Test 5: Auth error
 echo "[TEST] Auth error handling..."
-if $MEDIGO "https://mooc1.chaoxing.com/course/123" 2>&1 | grep -qi "cookie\|login\|auth\|object"; then
+if $MEDIGO "https://www.icourse163.org/course/ZJICM-1449623161" 2>&1 | grep -qi "cookie\|login\|auth\|not logged\|requires"; then
     echo "  PASS: proper error message"
     PASS=$((PASS+1))
 else

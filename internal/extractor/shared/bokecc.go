@@ -1,7 +1,8 @@
 // BokeCC (p.bokecc.com / cc.video) helpers — used by Qihang, Jingtongxue, etc.
 //
 // BokeCC playback chain (from Qihang_Course.pyc):
-//   GET https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid={siteid}
+//
+//	GET https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid={siteid}
 //
 // The response is XML containing <copy>0</copy>, <playurl>...</playurl>, and a
 // <quality>NN</quality> per quality block. siteid is per-tenant, hardcoded by

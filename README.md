@@ -1,10 +1,8 @@
 # MediGo
 
-A CLI tool for downloading videos from 92 Chinese educational and media platforms. Single binary, cross-platform.
+A CLI tool for downloading videos from **94 Chinese educational and media platforms**. Single binary, cross-platform. yt-dlp style interface, aligned with decompiled Python source logic.
 
 ## Install
-
-Download the latest binary from [Releases](https://github.com/nichuanfang/medigo/releases), or build from source:
 
 ```bash
 go install github.com/nichuanfang/medigo/cmd/medigo@latest
@@ -20,7 +18,7 @@ make build
 
 ### Requirements
 
-- **ffmpeg** (optional): Required for HLS/DASH streams. Install via your package manager.
+- **ffmpeg** (optional): Required for HLS/DASH streams.
 
 ## Usage
 
@@ -28,117 +26,97 @@ make build
 # Download a video
 medigo https://www.bilibili.com/video/BV1GJ411x7h7
 
-# Specify quality
-medigo -q 1080p https://www.bilibili.com/video/BV1GJ411x7h7
+# With cookies (for paid/locked content)
+medigo --cookies cookies.txt https://www.icourse163.org/course/ZJICM-1449623161
 
-# Use cookies from browser
-medigo --cookies-from-browser chrome https://mooc1.chaoxing.com/course/123
+# Read cookies from browser
+medigo --cookies-from-browser chrome https://ke.fenbi.com/win/v3/lectures/123
 
-# Use cookie file (Netscape format)
-medigo --cookies cookies.txt https://www.icourse163.org/course/ZJU-93001
+# List available formats
+medigo -F https://www.bilibili.com/video/BV1GJ411x7h7
 
-# List streams without downloading
-medigo --list https://www.bilibili.com/video/BV1GJ411x7h7
+# Dump info as JSON (no download)
+medigo -j https://tv.cctv.com/2024/01/01/VIDE1234567890.shtml
 
-# Output as JSON
-medigo --json https://v.douyin.com/CeiJFhAo/
+# Download entire course/playlist
+medigo --yes-playlist --cookies cookies.txt "https://www.icourse163.org/course/ZJICM-1449623161"
 
-# Download all episodes
-medigo --all https://www.bilibili.com/cheese/play/ss123
+# Custom output template
+medigo -o "%(site)s/%(title)s.%(ext)s" URL
 
-# Specify output directory
-medigo -o ./downloads https://www.douyin.com/video/123456
+# With proxy
+medigo --proxy socks5://127.0.0.1:1080 URL
 
-# List supported sites
-medigo sites
+# Simulate (show info without downloading)
+medigo --simulate URL
+
+# Write subtitle files
+medigo --write-subs --cookies cookies.txt URL
+
+# Concurrent fragment downloads
+medigo -N 20 URL
 ```
 
-### Flags
+## Flags
 
 | Flag | Description |
 |------|-------------|
-| `-q, --quality` | Preferred quality (best/1080p/720p/480p) |
-| `-o, --output` | Output directory |
-| `-c, --concurrency` | Download concurrency (default: 10) |
+| `-f, --format` | Format selection (best/worst/1080p/720p/480p) |
+| `-o, --output` | Output filename template (`%(title)s.%(ext)s`) |
 | `--cookies` | Netscape cookie file path |
 | `--cookies-from-browser` | Read cookies from browser (chrome/edge/firefox) |
-| `--list` | List available streams |
-| `--all` | Download all chapters/episodes |
-| `--json` | Output media info as JSON |
-| `--write-subs` | Write subtitle files alongside the downloaded media |
+| `-F, --list-formats` | List available formats and exit |
+| `-j, --dump-json` | Dump info JSON to stdout and exit |
+| `--write-info-json` | Write .info.json alongside download |
+| `--no-overwrites` | Do not overwrite existing files |
+| `-N, --concurrent-fragments` | Number of concurrent fragment downloads (default 10) |
+| `--yes-playlist` | Download all items in a playlist/course |
+| `--merge-output-format` | Merge output container (mp4/mkv/webm) |
+| `--no-progress` | Suppress progress bar |
+| `--proxy` | HTTP/SOCKS proxy URL |
+| `--simulate` | Show extracted info without downloading |
+| `--write-subs` | Write subtitle files alongside download |
+| `--list-extractors` | List all supported sites |
 
-## Supported Sites (92)
+## Supported Platforms (94)
 
-### No Auth Required
-| Site | Domain |
-|------|--------|
-| Bilibili | bilibili.com |
-| Douyin | douyin.com |
-| CCTV | tv.cctv.com |
-| Smartedu | smartedu.cn |
-| Icourses | icourses.cn |
-| Open163 | open.163.com |
-
-### Auth Required (cookie needed)
-| Site | Domain |
-|------|--------|
-| Chaoxing | chaoxing.com |
-| icourse163 | icourse163.org |
-| Xuetang | xuetangx.com |
-| Zhihuishu | zhihuishu.com |
-| imooc | imooc.com |
-| DingTalk | dingtalk.com |
-| Feishu | feishu.cn |
-| Fenbi | fenbi.com |
-| Huatu | huatu.com |
-| Gaodun | gaodun.com |
-| 51CTO | 51cto.com |
-| Huke88 | huke88.com |
-| Xueersi | xueersi.com |
-| Koolearn | koolearn.com |
-| Ke.qq | ke.qq.com |
-| ... and 70+ more |
-
-Run `medigo sites` for the full list.
+Bilibili, Douyin, CCTV, Chaoxing, iCourse163, Xuetang, Zhihuishu, imooc, DingTalk, Feishu, Fenbi, Huatu, Gaodun, Jianshe99, Med66, Hqwx, Wangxiao, Wangxiao233, Dongao, Eoffcn, Kaoyanvip, Yikaobang, Xueersi, Yangcong, Yixiaoerguo, Speiyou, Gaotu, Koolearn, Cto51, Huke88, Magedu, Itbaizhan, Luffycity, Tmooc, Mashibing, Xiaoetech, Xiaoeapp, Youzan, Qlchat, Lizhiweike, Renrenjiang, Sanjieke, Duanshu, Lexueyun, Meeting, Classin, CCTalk, Baijiayunxiao, Keqq, Smartedu, Icourses, Icve, Cnmooc, Open163, Unipus, Ahu, Nmkjxy, Aishangke, Caixuetang, Chaoge, Ckjr, Enetedu, Gongxuanwang, Haiyangknow, Haozaixian, Houda, Houdu, Htknow, Jinbangshidai, Jingtongxue, Kaimingzhixue, Kuke, Ledu, Mddclass, Minshi, Orangevip, Plaso, Qihang, Shanxiang, Sier, Wallstreets, Wendao, Wowtiku, Xiwang, Xsteach, Xuelang, Yizhiknow, Youdao, Youyuan, Zhaozhao, Zhengbao, Zlketang
 
 ## Architecture
 
 ```
-medigo/
-├── cmd/medigo/          # CLI entry point (cobra)
-├── internal/
-│   ├── config/          # Configuration (~/.config/medigo/)
-│   ├── cookie/          # Cookie handling (file + browser)
-│   ├── download/        # Download engine (direct/HLS/DASH)
-│   ├── extractor/       # Extractor interface + registry
-│   │   ├── bilibili/    # Bilibili (video/cheese/bangumi)
-│   │   ├── douyin/      # Douyin (cookie-less, ttwid)
-│   │   ├── cctv/        # CCTV (cntv API)
-│   │   ├── chaoxing/    # Chaoxing (ananas API)
-│   │   └── sites/       # 80+ generic extractors
-│   └── util/            # HTTP client, crypto, filename
-├── scripts/             # E2E tests
-├── Makefile             # Cross-compilation
-└── go.mod
+medigo URL
+  → extractor.Match(url)           # URL regex → select extractor
+  → extractor.Extract(url, opts)   # Call API chain → MediaInfo
+  → download.SelectBestStream()    # -f format selection
+  → engine.Download(info, stream)  # HLS/DASH/direct download
 ```
 
-## Cross-platform Build
+- `internal/extractor/<site>/` — per-site extractors (92 packages)
+- `internal/extractor/shared/` — shared platform helpers (csslcloud, polyv, bokecc, baijiayun, aliyun)
+- `internal/download/` — download engine (HLS, DASH, direct, concurrent segments)
+- `internal/cookie/` — Netscape + browser cookie support
+- `internal/util/` — HTTP client, crypto (AES/RSA/MD5), filename sanitization
+
+## Development
 
 ```bash
-make build-all
-# Produces:
-#   dist/medigo.exe     (Windows)
-#   dist/medigo-linux   (Linux)
-#   dist/medigo-mac     (macOS ARM64)
+# Build
+go build ./...
+
+# Run all tests
+go test ./...
+
+# Verify extractor alignment (no stubs)
+python3 scripts/verify_full_alignment.py
+
+# Run E2E tests
+bash scripts/e2e_test.sh
+
+# Generate golden file test scaffolding
+python3 scripts/gen_golden_tests.py
 ```
 
 ## License
 
 MIT
-
----
-
-Made with Go. Inspired by [lux](https://github.com/iawia002/lux).
-
-[![Built with Go](https://img.shields.io/badge/Built%20with-Go-00ADD8?logo=go)](https://go.dev)
-[![Linux.do](https://img.shields.io/badge/Linux.do-Community-blue)](https://linux.do)

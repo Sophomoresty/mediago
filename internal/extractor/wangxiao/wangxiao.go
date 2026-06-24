@@ -244,7 +244,6 @@ func walkJSON(v any, fn func(map[string]any)) {
 	}
 }
 
-
 func normalizeURL(raw, base string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.HasPrefix(strings.ToLower(raw), "javascript:") {
@@ -323,11 +322,11 @@ func parseClasshourLinks(html, productID string) []lessonRef {
 			title = cleanText(tm[1])
 		}
 		refs = append(refs, lessonRef{
-			Title:    title,
-			URL:      linkMatch[1],
+			Title:      title,
+			URL:        linkMatch[1],
 			ActivityID: firstGroup(activityRe, linkMatch[1]),
-			ProductID: productID,
-			Legacy:    strings.Contains(linkMatch[1], "users.wangxiao.cn"),
+			ProductID:  productID,
+			Legacy:     strings.Contains(linkMatch[1], "users.wangxiao.cn"),
 		})
 	}
 	return refs
@@ -380,8 +379,6 @@ func cleanText(s string) string {
 	s = regexp.MustCompile(`(?is)<[^>]+>`).ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
 }
-
-
 
 func firstString(m map[string]any, keys ...string) string {
 	for _, k := range keys {

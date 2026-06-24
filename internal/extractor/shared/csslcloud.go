@@ -6,17 +6,17 @@
 // CSSLcloud (view.csslcloud.net) chain ported from decompiled Mooc/Courses/
 // {Jianshe99,Med66,Houda,Qihang,Shanxiang,Aishangke,Chaoge}/<site>_Course.pyc:
 //
-//   1. POST  https://view.csslcloud.net/api/room/replay/login
-//            body: liveRoomId, userid, accessid, recordId, viewername, viewertoken,
-//                  forcibly=0, version, service=3, client=4
-//            → returns { datas: { sessionId } }
+//  1. POST  https://view.csslcloud.net/api/room/replay/login
+//     body: liveRoomId, userid, accessid, recordId, viewername, viewertoken,
+//     forcibly=0, version, service=3, client=4
+//     → returns { datas: { sessionId } }
 //
-//   2. GET   https://view.csslcloud.net/api/record/vod
-//            ?accountId={accessid}&recordId={recordId}&terminal=3&token={sessionId}
-//            → returns { data: { vod_info: { video: [{ url, definition }], audio: [{ url }] } } }
+//  2. GET   https://view.csslcloud.net/api/record/vod
+//     ?accountId={accessid}&recordId={recordId}&terminal=3&token={sessionId}
+//     → returns { data: { vod_info: { video: [{ url, definition }], audio: [{ url }] } } }
 //
-//   3. The video URL points at a .m3u8 manifest; AES-128 keys are tokenised:
-//      EXT-X-KEY URI must be re-fetched with bokecc info-token then hex-encoded.
+//  3. The video URL points at a .m3u8 manifest; AES-128 keys are tokenised:
+//     EXT-X-KEY URI must be re-fetched with bokecc info-token then hex-encoded.
 package shared
 
 import (
