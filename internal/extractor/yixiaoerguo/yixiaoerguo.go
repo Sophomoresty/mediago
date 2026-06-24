@@ -42,7 +42,7 @@ const (
 
 var (
 	patterns     = []string{`(?:[\w-]+\.)?(?:biguo|qianxuecloud)\.(?:cn|com)/`}
-	cidRe        = regexp.MustCompile(`(?i)(?:/courses?/|courseId=|cid=|id=)([0-9a-f]{24})|(?<![0-9a-fA-F])([0-9a-fA-F]{24})(?![0-9a-fA-F])`)
+	cidRe        = regexp.MustCompile(`(?i)(?:/courses?/|courseId=|cid=|id=)([0-9a-f]{24})|(?:^|[^0-9a-fA-F])([0-9a-fA-F]{24})(?:[^0-9a-fA-F]|$)`)
 	titleCleanRe = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
 )
 

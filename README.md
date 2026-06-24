@@ -65,6 +65,7 @@ medigo sites
 | `--list` | List available streams |
 | `--all` | Download all chapters/episodes |
 | `--json` | Output media info as JSON |
+| `--write-subs` | Write subtitle files alongside the downloaded media |
 
 ## Supported Sites (92)
 

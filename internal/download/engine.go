@@ -1,12 +1,15 @@
 package download
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,6 +70,36 @@ func (e *Engine) Download(info *extractor.MediaInfo, stream extractor.Stream) (s
 	}
 }
 
+func (e *Engine) DownloadSubtitles(info *extractor.MediaInfo, videoPath string) ([]string, error) {
+	if info == nil || len(info.Subtitles) == 0 {
+		return nil, nil
+	}
+	base := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	var paths []string
+	for i, sub := range info.Subtitles {
+		if strings.TrimSpace(sub.URL) == "" {
+			continue
+		}
+		lang := util.SanitizeFilename(firstNonEmpty(sub.Language, "und"))
+		ext := subtitleExt(sub)
+		outPath := fmt.Sprintf("%s.%s.%s", base, lang, ext)
+		if i > 0 && containsPath(paths, outPath) {
+			outPath = fmt.Sprintf("%s.%s-%d.%s", base, lang, i+1, ext)
+		}
+		if !e.opts.Overwrite {
+			if _, err := os.Stat(outPath); err == nil {
+				paths = append(paths, outPath)
+				continue
+			}
+		}
+		if err := e.downloadSingle(sub.URL, outPath, nil, 0); err != nil {
+			return paths, fmt.Errorf("%s: %w", sub.URL, err)
+		}
+		paths = append(paths, outPath)
+	}
+	return paths, nil
+}
+
 func (e *Engine) downloadDirect(filename string, stream extractor.Stream) (string, error) {
 	if len(stream.URLs) == 0 {
 		return "", fmt.Errorf("no URLs in stream")
@@ -94,6 +127,10 @@ func (e *Engine) downloadDirect(filename string, stream extractor.Stream) (strin
 func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, size int64) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
+	}
+
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(url)), "data:") {
+		return writeDataURL(url, outPath)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -138,6 +175,33 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 		return closeErr
 	}
 
+	return os.Rename(partPath, outPath)
+}
+
+func writeDataURL(raw, outPath string) error {
+	comma := strings.Index(raw, ",")
+	if !strings.HasPrefix(strings.ToLower(raw), "data:") || comma < 0 {
+		return fmt.Errorf("invalid data URL")
+	}
+	meta, payload := raw[5:comma], raw[comma+1:]
+	var data []byte
+	if strings.Contains(strings.ToLower(meta), ";base64") {
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return err
+		}
+		data = decoded
+	} else {
+		decoded, err := url.PathUnescape(payload)
+		if err != nil {
+			return err
+		}
+		data = []byte(decoded)
+	}
+	partPath := outPath + ".part"
+	if err := os.WriteFile(partPath, data, 0o644); err != nil {
+		return err
+	}
 	return os.Rename(partPath, outPath)
 }
 
@@ -245,4 +309,35 @@ func concatFiles(dir, outPath string, count int) error {
 		}
 	}
 	return nil
+}
+
+func subtitleExt(sub extractor.Subtitle) string {
+	format := strings.Trim(strings.TrimSpace(sub.Format), ".")
+	if format == "" {
+		if u, err := url.Parse(sub.URL); err == nil {
+			format = strings.TrimPrefix(filepath.Ext(u.Path), ".")
+		}
+	}
+	if format == "" {
+		format = "srt"
+	}
+	return util.SanitizeFilename(format)
+}
+
+func containsPath(paths []string, target string) bool {
+	for _, p := range paths {
+		if p == target {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
