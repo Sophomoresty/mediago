@@ -1,10 +1,19 @@
 # binaries
 /medigo
+/medigo.exe
 *.exe
 dist/
+build/
 
 # Go
 vendor/
+
+# Python
+.venv/
+__pycache__/
+
+# Codex
+.codex/
 
 # IDE
 .idea/

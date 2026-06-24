@@ -38,6 +38,7 @@ var (
 	lessonIDRe  = regexp.MustCompile(`(?i)(?:lesson_id|lessonId|lid)=([A-Za-z0-9_-]+)|/(?:lesson|detail)/(\w+)`)
 	packageIDRe = regexp.MustCompile(`(?i)(?:package_id|packageId|cid)=([A-Za-z0-9_-]+)`)
 	codingRe    = regexp.MustCompile(`(?i)(?:coding|code)=([A-Za-z0-9_-]+)`)
+	spuIDRe     = regexp.MustCompile(`(?i)(?:spu_id|spuId|spuID|spu)=([A-Za-z0-9_-]+)|"spuId"\s*:\s*"?([A-Za-z0-9_-]+)"?`)
 )
 
 type eoffcnParams struct {
@@ -46,6 +47,16 @@ type eoffcnParams struct {
 	LessonID    string
 	ModuleType  string
 	Coding      string
+	SpuID       string
+	Title       string
+	PayMoney    string
+}
+
+type eoffcnOrder struct {
+	SystemOrder string
+	SpuID       string
+	Title       string
+	PayMoney    string
 }
 
 type lessonNode struct {
@@ -62,9 +73,6 @@ func (e *Eoffcn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		return nil, fmt.Errorf("eoffcn requires login cookies")
 	}
 	params := parseParams(rawURL)
-	if params.SystemOrder == "" && params.PackageID == "" && params.LessonID == "" && params.Coding == "" {
-		return nil, fmt.Errorf("cannot parse eoffcn package/lesson id from URL: %s", rawURL)
-	}
 
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
@@ -72,6 +80,25 @@ func (e *Eoffcn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		"Accept":  "application/json, text/plain, */*",
 		"Referer": "https://www.eoffcn.com",
 		"Origin":  "https://www.eoffcn.com",
+	}
+
+	if params.SpuID == "" {
+		params.SpuID = fetchSpuIDFromPage(c, rawURL, headers)
+	}
+	if params.SystemOrder == "" && params.SpuID != "" {
+		selected, err := selectOrder(c, headers, params)
+		if err != nil {
+			return nil, err
+		}
+		params = mergeOrderParams(params, selected)
+	} else if params.SystemOrder != "" {
+		if selected, err := selectOrder(c, headers, params); err == nil {
+			params = mergeOrderParams(params, selected)
+		}
+	}
+
+	if params.SystemOrder == "" && params.PackageID == "" && params.LessonID == "" && params.Coding == "" {
+		return nil, fmt.Errorf("cannot parse eoffcn package/lesson id from URL: %s", rawURL)
 	}
 
 	if params.LessonID != "" {
@@ -93,7 +120,7 @@ func (e *Eoffcn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 }
 
 func resolveCourse(c *util.Client, headers map[string]string, p eoffcnParams) ([]*extractor.MediaInfo, string, error) {
-	var title string
+	title := p.Title
 	var nodes []lessonNode
 
 	if p.SystemOrder != "" {
@@ -217,12 +244,140 @@ func parseParams(raw string) eoffcnParams {
 		out.LessonID = firstNonEmpty(q.Get("lesson_id"), q.Get("lessonId"), q.Get("lid"))
 		out.ModuleType = firstNonEmpty(q.Get("module_type"), q.Get("moduleType"), q.Get("m_type"), "0")
 		out.Coding = firstNonEmpty(q.Get("coding"), q.Get("code"))
+		out.SpuID = firstNonEmpty(q.Get("spuId"), q.Get("spu_id"), q.Get("spu"))
 	}
 	out.SystemOrder = firstNonEmpty(out.SystemOrder, rx(courseIDRe, raw))
 	out.PackageID = firstNonEmpty(out.PackageID, rx(packageIDRe, raw))
 	out.LessonID = firstNonEmpty(out.LessonID, rx(lessonIDRe, raw))
 	out.Coding = firstNonEmpty(out.Coding, rx(codingRe, raw))
+	out.SpuID = firstNonEmpty(out.SpuID, rx(spuIDRe, raw))
 	return out
+}
+
+func fetchSpuIDFromPage(c *util.Client, rawURL string, headers map[string]string) string {
+	body, err := c.GetString(rawURL, headers)
+	if err != nil {
+		return ""
+	}
+	return firstNonEmpty(rx(spuIDRe, body), rx(spuIDRe, rawURL))
+}
+
+func selectOrder(c *util.Client, headers map[string]string, p eoffcnParams) (eoffcnOrder, error) {
+	orders, err := fetchOldOrders(c, headers)
+	if err != nil {
+		return eoffcnOrder{}, err
+	}
+	if len(orders) == 0 {
+		return eoffcnOrder{}, fmt.Errorf("eoffcn: no old orders found")
+	}
+	if selected, ok := matchOldOrder(orders, p); ok {
+		return selected, nil
+	}
+	return eoffcnOrder{}, fmt.Errorf("eoffcn: old order not found for spuId=%s system_order=%s", p.SpuID, p.SystemOrder)
+}
+
+func mergeOrderParams(p eoffcnParams, order eoffcnOrder) eoffcnParams {
+	if order.SystemOrder != "" {
+		p.SystemOrder = order.SystemOrder
+	}
+	if order.SpuID != "" {
+		p.SpuID = order.SpuID
+	}
+	if order.Title != "" {
+		p.Title = order.Title
+	}
+	if order.PayMoney != "" {
+		p.PayMoney = order.PayMoney
+	}
+	return p
+}
+
+func fetchOldOrders(c *util.Client, headers map[string]string) ([]eoffcnOrder, error) {
+	body, err := c.GetString(order_url, headers)
+	if err != nil {
+		return nil, fmt.Errorf("fetch eoffcn old order list: %w", err)
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, fmt.Errorf("parse eoffcn old order list: %w", err)
+	}
+	return collectOldOrders(payload), nil
+}
+
+func matchOldOrder(orders []eoffcnOrder, p eoffcnParams) (eoffcnOrder, bool) {
+	for _, order := range orders {
+		if p.SystemOrder != "" && order.SystemOrder != p.SystemOrder {
+			continue
+		}
+		if p.SpuID != "" && order.SpuID != p.SpuID {
+			continue
+		}
+		return order, true
+	}
+	if p.SystemOrder != "" {
+		for _, order := range orders {
+			if order.SystemOrder == p.SystemOrder {
+				return order, true
+			}
+		}
+	}
+	if p.SpuID != "" {
+		for _, order := range orders {
+			if order.SpuID == p.SpuID {
+				return order, true
+			}
+		}
+	}
+	return eoffcnOrder{}, false
+}
+
+func collectOldOrders(v any) []eoffcnOrder {
+	var out []eoffcnOrder
+	var walk func(any)
+	walk = func(x any) {
+		switch vv := x.(type) {
+		case map[string]any:
+			systemOrder := firstNonEmpty(valueString(vv, "systemSn", "systemSnNum", "system_order_num", "system_order"), valueString(mapValue(vv, "orderInfoExpand"), "systemSn", "system_order_num"))
+			spuID := firstNonEmpty(valueString(vv, "spuId", "spu_id", "spuID"), valueString(mapValue(vv, "orderInfoExpand"), "spuId"))
+			title := firstNonEmpty(valueString(vv, "goodsName", "cargoName", "name", "title"), valueString(mapValue(vv, "orderInfoExpand"), "goodsName", "cargoName"))
+			payMoney := firstNonEmpty(valueString(vv, "payMoney", "pay_money", "money"), valueString(mapValue(vv, "orderInfoExpand"), "payMoney", "money"))
+			if systemOrder != "" && (spuID != "" || title != "" || payMoney != "") {
+				out = append(out, eoffcnOrder{SystemOrder: systemOrder, SpuID: spuID, Title: title, PayMoney: payMoney})
+			}
+			for _, child := range vv {
+				walk(child)
+			}
+		case []any:
+			for _, child := range vv {
+				walk(child)
+			}
+		}
+	}
+	walk(v)
+	return dedupeOrders(out)
+}
+
+func dedupeOrders(orders []eoffcnOrder) []eoffcnOrder {
+	seen := map[string]bool{}
+	out := make([]eoffcnOrder, 0, len(orders))
+	for _, order := range orders {
+		key := order.SystemOrder + "\x00" + order.SpuID + "\x00" + order.Title
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, order)
+	}
+	return out
+}
+
+func mapValue(m map[string]any, key string) map[string]any {
+	if v, ok := m[key]; ok {
+		if mv, ok := v.(map[string]any); ok {
+			return mv
+		}
+	}
+	return map[string]any{}
 }
 
 func collectLessonNodes(v any, p eoffcnParams) []lessonNode {

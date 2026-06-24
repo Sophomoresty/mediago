@@ -116,8 +116,8 @@ var (
 	cookieBrowser  string
 	listFormats    bool
 	dumpJSON       bool
-	simulate       bool
 	writeInfoJSON  bool
+	writeSubs      bool
 	noOverwrites   bool
 	concurrency    int
 	listExtractors bool
@@ -152,9 +152,8 @@ Similar to yt-dlp but focused on Chinese internet platforms.`,
 	// Info/listing (yt-dlp: -F, -j, --write-info-json)
 	rootCmd.Flags().BoolVarP(&listFormats, "list-formats", "F", false, "list available formats and exit")
 	rootCmd.Flags().BoolVarP(&dumpJSON, "dump-json", "j", false, "dump info JSON to stdout and exit")
-	rootCmd.Flags().BoolVar(&simulate, "simulate", false, "print info JSON without downloading")
-	rootCmd.Flags().BoolVar(&simulate, "skip-download", false, "alias of --simulate")
 	rootCmd.Flags().BoolVar(&writeInfoJSON, "write-info-json", false, "write .info.json file alongside download")
+	rootCmd.Flags().BoolVar(&writeSubs, "write-subs", false, "write subtitle files alongside download")
 
 	// Download options
 	rootCmd.Flags().BoolVar(&noOverwrites, "no-overwrites", false, "do not overwrite existing files")
@@ -230,9 +229,6 @@ func processURL(url string) error {
 	if dumpJSON {
 		return printJSON(info)
 	}
-	if simulate {
-		return printJSON(info)
-	}
 
 	if info.IsPlaylist() {
 		fmt.Printf("[info] playlist: %s (%d items)\n", info.Title, len(info.Entries))
@@ -255,10 +251,6 @@ func processURL(url string) error {
 }
 
 func downloadOne(info *extractor.MediaInfo) error {
-	if simulate {
-		return printJSON(info)
-	}
-
 	if listFormats {
 		return printFormats(info)
 	}
@@ -286,6 +278,15 @@ func downloadOne(info *extractor.MediaInfo) error {
 
 	if writeInfoJSON {
 		writeInfoJSONFile(outPath, info)
+	}
+	if writeSubs {
+		if subs, err := engine.DownloadSubtitles(info, outPath); err != nil {
+			return fmt.Errorf("download subtitles: %w", err)
+		} else {
+			for _, sub := range subs {
+				fmt.Printf("[subtitle] %s\n", sub)
+			}
+		}
 	}
 
 	fmt.Printf("[download] %s\n", outPath)

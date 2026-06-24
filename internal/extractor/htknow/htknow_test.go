@@ -76,3 +76,39 @@ func TestMediaFromSourcesKeepsMixedVideoAndHTML(t *testing.T) {
 		t.Fatalf("html document stream missing: %#v", mi.Entries[1].Streams)
 	}
 }
+
+func TestBuildAnswerHTMLRendersQuestions(t *testing.T) {
+	doc := buildAnswerHTML("答题课", map[string]any{"pay_content": "<p>课程介绍</p>"}, map[string]any{"quest_total": 1}, map[string]any{"id": "log1"}, nil, nil, []map[string]any{
+		{
+			"id":             "q1",
+			"title":          "1+1 等于几?",
+			"type":           1,
+			"options":        []any{map[string]any{"key": "A", "content": "2"}, map[string]any{"key": "B", "content": "3"}},
+			"correct_answer": "A",
+			"analysis":       "基础加法",
+		},
+	})
+	for _, want := range []string{"答题课", "1+1 等于几?", "单选题", "基础加法"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("answer html missing %q: %s", want, doc)
+		}
+	}
+}
+
+func TestMediaFromSourcesKeepsAnswerHTML(t *testing.T) {
+	html := buildAnswerHTML("答题课", nil, nil, nil, nil, nil, nil)
+	mi, err := mediaFromSources("课程", []source{{name: "答题课", kind: "答题HTML", answerHTML: html, extra: map[string]any{"product_type": "9"}}})
+	if err != nil {
+		t.Fatalf("mediaFromSources returned error: %v", err)
+	}
+	stream, ok := mi.Streams["document"]
+	if !ok {
+		t.Fatalf("document stream missing: %#v", mi.Streams)
+	}
+	if stream.Format != "html" || !strings.HasPrefix(stream.URLs[0], "data:text/html;charset=utf-8,") {
+		t.Fatalf("stream = %#v, want html data URL", stream)
+	}
+	if mi.Extra["answer_html"] != true || mi.Extra["product_type"] != "9" {
+		t.Fatalf("answer extra = %#v", mi.Extra)
+	}
+}

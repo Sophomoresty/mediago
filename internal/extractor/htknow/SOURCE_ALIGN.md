@@ -36,6 +36,7 @@
 | `_get_column_info` lines 356-364 | `columnSources` lines 209-217 | POST JSON | ✓ |
 | `_get_series_info` lines 397-403 | `seriesSources` lines 230-236 | POST JSON | ✓ |
 | `_get_product_token` decrypted constants: `video_info_url/pc_video_info_url` | `fetchProductURL` lines 261-287 | POST JSON | ✓ |
+| `_download_answer_source` decrypted line 832 | `answerSource`, `answerDetail`, `answerQuestionsWithFallback`, `buildAnswerHTML` | POST JSON | ✓ |
 
 ## JSON 字段映射
 
@@ -48,8 +49,9 @@
 | `column_course_list -> result.list[].product_token/pay_content/id/series_id/product_type/title` | `columnSources` + `sourceFromProduct` lines 219-258; HTML-only `pay_content` becomes a `document` stream | ✓ |
 | `series_course_list -> result.list[].article_list[]` | `seriesSources` lines 237-244 | ✓ |
 | `column_play_details -> result.article_detail.product_token/pay_content` and `result.detail.*` | `fetchProductURL` lines 277-280; HTML-only content preserved via `data:text/html` stream and `Extra.html_content` | ✓ |
+| `product_type == 9` answer/quest branch: `answer_detail`, `answer_log_detail`, `quest_library_id`, `quest_total`, `answer_log`, `result[]` | `answer.go` calls `pcVideoInfoURL`, `answerTagURL`, `answerNumURL`, `answerListURL`, `answerCreatePaperURL`; emits answer HTML document stream | ✓ |
 | `_get_video_url`: product_token base64 JSON `value/iv`, `base_KEY`, AES CBC decrypt, URL starts with `http` | `videoURL` lines 289-322 | ✓ |
 
 ## 阻塞步骤
 
-无。`_get_video_url` 在 .cdc.py 第 460 行截断, 已按 R7 读取 `decrypted_full/all_decrypted.json` 中 `Courses/Htknow/Htknow_Course__t343__get_video_url.pyc` 与 `__t360__get_product_token.pyc` 补齐字段链。
+无。`_get_video_url` 在 .cdc.py 第 460 行截断, 已按 R7 读取 `decrypted_full/all_decrypted.json` 中 `Courses/Htknow/Htknow_Course__t343__get_video_url.pyc` 与 `__t360__get_product_token.pyc` 补齐字段链。answer/quest HTML 分支按 `__t404__get_answer_detail.pyc`, `__t431__request_answer_json.pyc`, `__t503__get_answer_question_list.pyc`, `__t589__get_answer_tag_detail.pyc`, `__t605__get_answer_num_list.pyc`, `__t777__build_answer_html.pyc`, `__t832__download_answer_source.pyc` 实现。

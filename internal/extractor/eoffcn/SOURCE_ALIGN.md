@@ -16,6 +16,7 @@
 
 | 源码方法 | Go 函数 | method | 一致? |
 |---|---|---|---|
+| `_get_order_list` / `_get_new_order_list` / `_get_cid` lines 72-214 | `fetchOldOrders`, `selectOrder`, `fetchSpuIDFromPage`, `mergeOrderParams` | GET | ✓ |
 | `_get_courses_list` line 175 | `resolveCourse` | GET | ✓ |
 | `_get_package_list` line 155 | `resolveCourse` | GET | ✓ |
 | `_get_catagory_info` line 199 | `resolveCourse` | GET | ✓ |

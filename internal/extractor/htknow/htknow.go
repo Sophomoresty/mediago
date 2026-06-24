@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 
@@ -58,7 +57,14 @@ type htCtx struct {
 }
 
 type course struct{ id, mainProductID, typ, title, userID string }
-type source struct{ name, url, kind, html string }
+type source struct {
+	name       string
+	url        string
+	kind       string
+	html       string
+	answerHTML string
+	extra      map[string]any
+}
 
 func (s *Htknow) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
 	if opts == nil || opts.Cookies == nil {
@@ -222,7 +228,7 @@ func (x *htCtx) columnSources(c course) ([]source, error) {
 	}
 	var out []source
 	for i, it := range listAt(root, "result", "list") {
-		if src := x.sourceFromProduct(c, it, fmt.Sprintf("[%d]--%s", i+1, trimMP4(str(it["title"])))); src.url != "" || src.html != "" {
+		if src := x.sourceFromProduct(c, it, fmt.Sprintf("[%d]--%s", i+1, trimMP4(str(it["title"])))); src.hasContent() {
 			out = append(out, src)
 		}
 	}
@@ -242,7 +248,7 @@ func (x *htCtx) seriesSources(c course) ([]source, error) {
 	for i, group := range listAt(root, "result", "list") {
 		for j, it := range listAt(group, "article_list") {
 			name := fmt.Sprintf("[%d.%d]--%s", i+1, j+1, trimMP4(str(it["title"])))
-			if src := x.sourceFromProduct(c, it, name); src.url != "" || src.html != "" {
+			if src := x.sourceFromProduct(c, it, name); src.hasContent() {
 				out = append(out, src)
 			}
 		}
@@ -256,6 +262,12 @@ func (x *htCtx) seriesSources(c course) ([]source, error) {
 func (x *htCtx) sourceFromProduct(c course, it map[string]any, name string) source {
 	token := str(it["product_token"])
 	htmlText := str(it["pay_content"])
+	productID := firstNonEmpty(str(it["id"]), str(it["product_id"]))
+	productType := str(it["product_type"])
+	columnID := str(it["series_id"])
+	if productType == "9" {
+		return x.answerSource(c, columnID, productID, productType, name)
+	}
 	url := x.videoURL(token)
 	if url == "" {
 		fetchedURL, fetchedHTML := x.fetchProductURL(c, str(it["series_id"]), str(it["id"]), str(it["product_type"]))
@@ -267,6 +279,10 @@ func (x *htCtx) sourceFromProduct(c course, it map[string]any, name string) sour
 		}
 	}
 	return source{name: name, url: url, kind: c.typ, html: htmlText}
+}
+
+func (s source) hasContent() bool {
+	return strings.TrimSpace(s.url) != "" || strings.TrimSpace(s.html) != "" || strings.TrimSpace(s.answerHTML) != ""
 }
 
 func (x *htCtx) fetchProductURL(c course, columnID, productID, productType string) (string, string) {
@@ -354,9 +370,21 @@ func (x *htCtx) postJSON(endpoint string, payload map[string]any) (map[string]an
 func mediaFromSources(title string, srcs []source) (*extractor.MediaInfo, error) {
 	var entries []*extractor.MediaInfo
 	mk := func(s source) *extractor.MediaInfo {
-		extra := map[string]any{"html_content": s.html}
+		extra := map[string]any{}
+		for k, v := range s.extra {
+			extra[k] = v
+		}
+		if s.html != "" {
+			extra["html_content"] = s.html
+		}
+		if s.answerHTML != "" {
+			extra["html_content"] = s.answerHTML
+			extra["answer_html"] = true
+			htmlURL := htmlDataURL(s.answerHTML)
+			return &extractor.MediaInfo{Site: "htknow", Title: s.name, Streams: map[string]extractor.Stream{"document": {Quality: firstNonEmpty(s.kind, "答题HTML"), URLs: []string{htmlURL}, Format: "html", Headers: map[string]string{"Referer": refererURL}}}, Extra: extra}
+		}
 		if strings.TrimSpace(s.url) == "" {
-			htmlURL := "data:text/html;charset=utf-8," + url.PathEscape(s.html)
+			htmlURL := htmlDataURL(s.html)
 			return &extractor.MediaInfo{Site: "htknow", Title: s.name, Streams: map[string]extractor.Stream{"document": {Quality: firstNonEmpty(s.kind, "html"), URLs: []string{htmlURL}, Format: "html", Headers: map[string]string{"Referer": refererURL}}}, Extra: extra}
 		}
 		format := strings.TrimPrefix(strings.ToLower(path.Ext(strings.Split(s.url, "?")[0])), ".")
@@ -366,12 +394,12 @@ func mediaFromSources(title string, srcs []source) (*extractor.MediaInfo, error)
 		return &extractor.MediaInfo{Site: "htknow", Title: s.name, Streams: map[string]extractor.Stream{"default": {Quality: s.kind, URLs: []string{s.url}, Format: format, Headers: map[string]string{"Referer": refererURL}}}, Extra: extra}
 	}
 	for _, src := range srcs {
-		if strings.TrimSpace(src.url) != "" || strings.TrimSpace(src.html) != "" {
+		if src.hasContent() {
 			entries = append(entries, mk(src))
 		}
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("htknow: no playable video URL or html_content")
+		return nil, fmt.Errorf("htknow: no playable video URL, html_content, or answer HTML")
 	}
 	if len(entries) == 1 {
 		entries[0].Title = firstNonEmpty(entries[0].Title, title)
