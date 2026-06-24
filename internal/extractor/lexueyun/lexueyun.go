@@ -276,7 +276,10 @@ func requestLexue(c *util.Client, auth, path string, params map[string]any) ([]b
 		params = map[string]any{}
 	}
 	params["channelCode"] = channelCode
-	payload, _ := json.Marshal(params)
+	payload, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("lexueyun marshal request %s: %w", path, err)
+	}
 	apiURL := path
 	if !strings.HasPrefix(apiURL, "http") {
 		apiURL = urlOrigin + path
@@ -307,13 +310,19 @@ func sunlandsMediaURL(c *util.Client, playURL string) (string, sunlandsVideo, er
 		return playURL, sunlandsVideo{}, nil
 	}
 	liveData["terminalType"] = 3
-	payload, _ := json.Marshal(liveData)
+	payload, err := json.Marshal(liveData)
+	if err != nil {
+		return "", sunlandsVideo{}, err
+	}
 	resp, err := c.Post(sunlandsVideoEntry+"/thirdLogin", bytes.NewReader(payload), map[string]string{"Accept": "application/json, text/plain, */*", "Content-Type": "application/json", "Referer": playURL, "Origin": urlOrigin})
 	if err != nil {
 		return "", sunlandsVideo{}, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", sunlandsVideo{}, err
+	}
 	var sr sunlandsResp
 	if err := json.Unmarshal(b, &sr); err != nil {
 		return "", sunlandsVideo{}, err

@@ -34,7 +34,10 @@ const (
 	sts_preview_url   = "https://www.plaso.cn/yxt/servlet/stsHelper/preview/stsInfo"
 )
 
-var patterns = []string{`(?:[\w-]+\.)?plaso\.cn/`}
+var patterns = []string{
+	`(?:[\w-]+\.)?plaso\.cn/`,
+	`(?:[\w-]+\.)?aiwenyun\.cn/`,
+}
 
 func init() {
 	extractor.Register(&Plaso{}, extractor.SiteInfo{Name: "Plaso", URL: "plaso.cn", NeedAuth: true})
@@ -55,6 +58,9 @@ var (
 func (s *Plaso) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("plaso requires login cookies")
+	}
+	if isBlockedPlasoVariant(rawURL) {
+		return nil, fmt.Errorf("plaso variant blocked: needs host-specific API mapping for Aiwenyun/Jhpy source")
 	}
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
@@ -86,7 +92,11 @@ func (s *Plaso) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.
 	}
 	var entries []*extractor.MediaInfo
 	seen := map[string]bool{}
+	blockedLocalLocation := false
 	for i, f := range files {
+		if (f.Location != "" || f.LocationPath != "") && f.ID == "" && f.URL == "" && f.Vid == "" {
+			blockedLocalLocation = true
+		}
 		mi := resolveFile(c, h, f, i+1)
 		if mi == nil {
 			continue
@@ -99,6 +109,9 @@ func (s *Plaso) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.
 		entries = append(entries, mi)
 	}
 	if len(entries) == 0 {
+		if blockedLocalLocation {
+			return nil, fmt.Errorf("plaso local location playback blocked: needs STS/plist sandbox flow from Plaso_Local source")
+		}
 		return nil, fmt.Errorf("plaso: no playable m3u8/mp4/file URLs resolved from file records")
 	}
 	return &extractor.MediaInfo{Site: "plaso", Title: clean(title), Entries: entries, Extra: map[string]any{"course_id": cid}}, nil
@@ -194,8 +207,10 @@ func resolveFile(c *util.Client, h map[string]string, f fileItem, idx int) *extr
 	if f.ID != "" {
 		candidates = append(candidates, fetchAliPlayURL(c, h, f.ID), fetchPolyvURL(c, h, f.ID, f.Vid))
 	}
-	if f.Location != "" {
-		candidates = append(candidates, fmt.Sprintf("https://filecdn.plaso.cn/liveclass/plaso/%s/video/1.mp4", strings.Trim(f.Location, "/")), fmt.Sprintf("https://file.plaso.cn/teaching/%s", strings.TrimLeft(f.Location, "/")))
+	if f.Location != "" || f.LocationPath != "" {
+		if f.ID == "" && f.URL == "" && f.Vid == "" {
+			return nil
+		}
 	}
 	for _, u := range candidates {
 		u = normalizeURL(u)
@@ -269,6 +284,10 @@ func parseCID(rawURL string) string {
 
 func headers() map[string]string {
 	return map[string]string{"Referer": referer, "Origin": referer, "Accept": "application/json, text/plain, */*"}
+}
+func isBlockedPlasoVariant(rawURL string) bool {
+	l := strings.ToLower(rawURL)
+	return strings.Contains(l, "aiwenyun.cn/") || strings.Contains(l, "jhpy.plaso.cn/")
 }
 func walk(v any, fn func(map[string]any)) {
 	switch t := v.(type) {
