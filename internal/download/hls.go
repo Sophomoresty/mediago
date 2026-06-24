@@ -2,11 +2,21 @@ package download
 
 import (
 	"bufio"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/util"
@@ -30,17 +40,28 @@ func (e *Engine) downloadHLS(filename string, stream extractor.Stream) (string, 
 		return outPath, e.hlsViaFFmpeg(m3u8URL, outPath, stream.Headers)
 	}
 
-	segments, err := e.parseM3U8(m3u8URL, stream.Headers)
+	segments, err := e.parseM3U8Segments(m3u8URL, stream.Headers)
 	if err != nil {
 		return "", err
 	}
+	tsPath := outPath + ".ts"
+	if hasEncryptedHLSSegments(segments) {
+		if err := e.downloadHLSSegments(segments, tsPath, stream.Headers); err != nil {
+			return "", err
+		}
+		os.Rename(tsPath, outPath)
+		return outPath, nil
+	}
 
+	urls := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		urls = append(urls, seg.URL)
+	}
 	tsStream := extractor.Stream{
-		URLs:    segments,
+		URLs:    urls,
 		Format:  "ts",
 		Headers: stream.Headers,
 	}
-	tsPath := outPath + ".ts"
 	_, err = e.downloadDirect(filename+".mp4", tsStream)
 	if err != nil {
 		return "", err
@@ -53,7 +74,7 @@ func (e *Engine) downloadHLS(filename string, stream extractor.Stream) (string, 
 func (e *Engine) hlsViaFFmpeg(m3u8URL, outPath string, headers map[string]string) error {
 	os.MkdirAll(filepath.Dir(outPath), 0o755)
 
-	args := []string{"-y"}
+	args := []string{"-y", "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data"}
 	if proxy := util.DefaultProxy(); proxy != "" {
 		if parsed, err := util.ParseProxyURL(proxy); err == nil {
 			if parsed.Scheme == "http" || parsed.Scheme == "https" {
@@ -87,34 +108,331 @@ func (e *Engine) hlsViaFFmpeg(m3u8URL, outPath string, headers map[string]string
 }
 
 func (e *Engine) parseM3U8(m3u8URL string, headers map[string]string) ([]string, error) {
-	body, err := e.client.GetString(m3u8URL, headers)
+	segments, err := e.parseM3U8Segments(m3u8URL, headers)
 	if err != nil {
 		return nil, err
 	}
+	urls := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		urls = append(urls, seg.URL)
+	}
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("no segments found in m3u8")
+	}
+	return urls, nil
+}
 
+type hlsSegment struct {
+	URL string
+	Key []byte
+	IV  []byte
+}
+
+func (e *Engine) parseM3U8Segments(m3u8URL string, headers map[string]string) ([]hlsSegment, error) {
+	body, err := e.readM3U8Text(m3u8URL, headers)
+	if err != nil {
+		return nil, err
+	}
 	baseURL := m3u8URL
-	if idx := strings.LastIndex(m3u8URL, "/"); idx >= 0 {
+	if strings.HasPrefix(strings.ToLower(m3u8URL), "data:") {
+		baseURL = ""
+	} else if idx := strings.LastIndex(m3u8URL, "/"); idx >= 0 {
 		baseURL = m3u8URL[:idx+1]
 	}
-	var segments []string
+	var segments []hlsSegment
+	var currentKey []byte
+	var currentIV []byte
+	segSeq := 0
 
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "http") {
-			segments = append(segments, line)
-		} else {
-			segments = append(segments, baseURL+line)
+		if strings.HasPrefix(line, "#EXT-X-MEDIA-SEQUENCE:") {
+			if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "#EXT-X-MEDIA-SEQUENCE:"))); err == nil {
+				segSeq = n
+			}
+			continue
 		}
+		if strings.HasPrefix(line, "#EXT-X-KEY:") {
+			attrs := parseM3U8Attrs(strings.TrimPrefix(line, "#EXT-X-KEY:"))
+			if strings.EqualFold(attrs["METHOD"], "NONE") {
+				currentKey, currentIV = nil, nil
+				continue
+			}
+			if strings.EqualFold(attrs["METHOD"], "AES-128") {
+				key, err := e.resolveM3U8Key(attrs["URI"], baseURL, headers)
+				if err != nil {
+					return nil, err
+				}
+				currentKey = key
+				currentIV = parseHLSIV(attrs["IV"])
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		iv := currentIV
+		if len(currentKey) > 0 && len(iv) == 0 {
+			iv = mediaSequenceIV(segSeq)
+		}
+		segments = append(segments, hlsSegment{URL: resolveM3U8URI(line, baseURL), Key: currentKey, IV: iv})
+		segSeq++
 	}
 
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("no segments found in m3u8")
 	}
 	return segments, nil
+}
+
+func (e *Engine) readM3U8Text(raw string, headers map[string]string) (string, error) {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "data:") {
+		data, err := decodeDataURLBytes(raw)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	return e.client.GetString(raw, headers)
+}
+
+func parseM3U8Attrs(raw string) map[string]string {
+	out := map[string]string{}
+	var parts []string
+	var cur strings.Builder
+	inQuote := false
+	for _, r := range raw {
+		switch r {
+		case '"':
+			inQuote = !inQuote
+			cur.WriteRune(r)
+		case ',':
+			if inQuote {
+				cur.WriteRune(r)
+			} else {
+				parts = append(parts, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		parts = append(parts, cur.String())
+	}
+	for _, part := range parts {
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		out[strings.ToUpper(strings.TrimSpace(k))] = strings.Trim(strings.TrimSpace(v), `"`)
+	}
+	return out
+}
+
+func (e *Engine) resolveM3U8Key(rawURI, baseURL string, headers map[string]string) ([]byte, error) {
+	if rawURI == "" {
+		return nil, fmt.Errorf("m3u8 AES-128 key URI missing")
+	}
+	keyURL := resolveM3U8URI(rawURI, baseURL)
+	if strings.HasPrefix(strings.ToLower(keyURL), "data:") {
+		return decodeDataURLBytes(keyURL)
+	}
+	req, err := http.NewRequest("GET", keyURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", util.RandomUA())
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := e.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("key HTTP %d: %s", resp.StatusCode, keyURL)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func resolveM3U8URI(raw, baseURL string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "//") {
+		return "https:" + raw
+	}
+	if baseURL == "" {
+		return raw
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		if strings.HasSuffix(baseURL, "/") {
+			return baseURL + strings.TrimLeft(raw, "/")
+		}
+		return baseURL + "/" + strings.TrimLeft(raw, "/")
+	}
+	ref, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return base.ResolveReference(ref).String()
+}
+
+func parseHLSIV(raw string) []byte {
+	raw = strings.TrimSpace(strings.TrimPrefix(raw, "0x"))
+	if raw == "" {
+		return nil
+	}
+	iv, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	if len(iv) == 16 {
+		return iv
+	}
+	if len(iv) > 16 {
+		return iv[len(iv)-16:]
+	}
+	out := make([]byte, 16)
+	copy(out[16-len(iv):], iv)
+	return out
+}
+
+func mediaSequenceIV(seq int) []byte {
+	iv := make([]byte, 16)
+	binary.BigEndian.PutUint64(iv[8:], uint64(seq))
+	return iv
+}
+
+func decodeDataURLBytes(raw string) ([]byte, error) {
+	comma := strings.Index(raw, ",")
+	if !strings.HasPrefix(strings.ToLower(raw), "data:") || comma < 0 {
+		return nil, fmt.Errorf("invalid data URL")
+	}
+	meta, payload := raw[5:comma], raw[comma+1:]
+	if strings.Contains(strings.ToLower(meta), ";base64") {
+		return base64.StdEncoding.DecodeString(payload)
+	}
+	decoded, err := url.PathUnescape(payload)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(decoded), nil
+}
+
+func hasEncryptedHLSSegments(segments []hlsSegment) bool {
+	for _, seg := range segments {
+		if len(seg.Key) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, headers map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return err
+	}
+	tmpDir, err := os.MkdirTemp("", "medigo-hls-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sem := make(chan struct{}, e.opts.Concurrency)
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+
+	for i, seg := range segments {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, seg hlsSegment) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			segPath := filepath.Join(tmpDir, fmt.Sprintf("seg_%05d", idx))
+			if err := e.downloadHLSSegment(seg, segPath, headers); err != nil {
+				errOnce.Do(func() { firstErr = err })
+			}
+		}(i, seg)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	partPath := outPath + ".part"
+	if err := concatFiles(tmpDir, partPath, len(segments)); err != nil {
+		os.Remove(partPath)
+		return err
+	}
+	return os.Rename(partPath, outPath)
+}
+
+func (e *Engine) downloadHLSSegment(seg hlsSegment, outPath string, headers map[string]string) error {
+	var data []byte
+	var err error
+	if strings.HasPrefix(strings.ToLower(seg.URL), "data:") {
+		data, err = decodeDataURLBytes(seg.URL)
+	} else {
+		req, reqErr := http.NewRequest("GET", seg.URL, nil)
+		if reqErr != nil {
+			return reqErr
+		}
+		req.Header.Set("User-Agent", util.RandomUA())
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, reqErr := e.http.Do(req)
+		if reqErr != nil {
+			return reqErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("segment HTTP %d: %s", resp.StatusCode, seg.URL)
+		}
+		data, err = io.ReadAll(resp.Body)
+	}
+	if err != nil {
+		return err
+	}
+	if len(seg.Key) > 0 {
+		data, err = decryptHLSSegment(data, seg.Key, seg.IV)
+		if err != nil {
+			return err
+		}
+	}
+	partPath := outPath + ".part"
+	if err := os.WriteFile(partPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(partPath, outPath)
+}
+
+func decryptHLSSegment(data, key, iv []byte) ([]byte, error) {
+	if len(iv) != aes.BlockSize {
+		return nil, fmt.Errorf("invalid AES IV length %d", len(iv))
+	}
+	if plain, err := util.AESDecryptCBC(data, key, iv); err == nil {
+		return plain, nil
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(data)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("ciphertext is not a multiple of block size")
+	}
+	out := make([]byte, len(data))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(out, data)
+	return out, nil
 }
 
 func (e *Engine) downloadDASH(filename string, stream extractor.Stream) (string, error) {

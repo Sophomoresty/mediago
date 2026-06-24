@@ -12,13 +12,15 @@ import (
 )
 
 const (
-	CCTALK_BASE_URL        = "https://www.cctalk.com"
-	CCTALK_CONTENT_API_V1  = "/webapi/content/v1"
-	CCTALK_CONTENT_API_V11 = "/webapi/content/v1.1"
-	CCTALK_CONTENT_API_V12 = "/webapi/content/v1.2"
-	CCTALK_PCWEB_KEY       = "pcweb"
-	CCTALK_TENANT_ID       = "10002"
-	CCTALK_USER_AGENT      = "Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/5.9.7 Chrome/56.0.2924.122 Safari/537.36 CTPC/7.10.10.1"
+	CCTALK_BASE_URL          = "https://www.cctalk.com"
+	CCTALK_CONTENT_API_V1    = "/webapi/content/v1"
+	CCTALK_CONTENT_API_V11   = "/webapi/content/v1.1"
+	CCTALK_CONTENT_API_V12   = "/webapi/content/v1.2"
+	CCTALK_PCWEB_KEY         = "pcweb"
+	CCTALK_TENANT_ID         = "10002"
+	CCTALK_USER_AGENT        = "Mozilla/5.0 (Windows NT 6.2; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/5.9.7 Chrome/56.0.2924.122 Safari/537.36 CTPC/7.10.10.1"
+	CCTALK_OCS_USER_AGENT    = "Hujiang/OCS/PC/Qt/Win"
+	CCTALK_OCS_MATERIAL_HOST = "https://p1.ocs.hjfile.cn"
 
 	my_group_list_url = "https://m.cctalk.com/webapi/content/v1.1/user/my_group_list?start=%d&limit=%d&sortType=1&keyword=%s"
 	mycourse_url      = "https://m.cctalk.com/mycourse"
@@ -26,6 +28,16 @@ const (
 )
 
 var patterns = []string{`(?:[\w-]+\.)?cctalk\.com/|^(?:cctalk|ocsplayer)://`}
+var cctalkOCSCurrentBases = []string{
+	"https://courseware-ocs.hjapi.com/v5.5/",
+	"https://courseware-ocs.hjapi.com/v5.4/",
+	"https://courseware-ocs.hjapi.com/v5/",
+	"https://courseware-ocs.hjapi.com/",
+	"https://courseware-ocs1.hjapi.com/v5.5/",
+	"https://courseware-ocs1.hjapi.com/v5.4/",
+	"https://courseware-ocs1.hjapi.com/v5/",
+	"https://courseware-ocs1.hjapi.com/",
+}
 
 func init() {
 	extractor.Register(&CCTalk{}, extractor.SiteInfo{Name: "CCTalk", URL: "cctalk.com", NeedAuth: true})
@@ -198,15 +210,20 @@ func (a *apiClient) getVideoPlayInfo(videoID, seriesID string) map[string]any {
 
 func buildEntries(a *apiClient, structs any, fallbackSeries string) []*extractor.MediaInfo {
 	var entries []*extractor.MediaInfo
+	seen := map[string]bool{}
 	for i, node := range walkMaps(structs) {
 		seriesID := firstNonEmpty(textValue(node, "seriesId"), fallbackSeries)
 		videoID := firstNonEmpty(textValue(node, "videoId", "video_id", "contentId", "lessonId", "id", "bizId"))
 		merged := node
-		if findMediaURL(merged) == "" && videoID != "" {
+		if findMediaURL(merged) == "" && !hasDownloadableResource(merged) && videoID != "" {
 			merged = mergeMaps(merged, a.getVideoPlayInfo(videoID, seriesID))
 		}
-		entry, err := mediaFromMap(a, merged, fmt.Sprintf("课时%d", i+1))
-		if err == nil {
+		for _, entry := range entriesFromMap(a, merged, fmt.Sprintf("课时%d", i+1)) {
+			key := entryKey(entry)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
 			entries = append(entries, entry)
 		}
 	}
@@ -215,17 +232,47 @@ func buildEntries(a *apiClient, structs any, fallbackSeries string) []*extractor
 
 func mediaFromMap(a *apiClient, item map[string]any, fallbackTitle string) (*extractor.MediaInfo, error) {
 	mediaURL := normalizeMediaURL(findMediaURL(item))
+	coursewareInfo := extractCoursewareInfo(item)
+	ocsExtra := map[string]any{}
+	ocsHeaders := baseHeaders()
+	if a != nil && a.headers != nil {
+		ocsHeaders = a.headers
+	}
+	if mediaURL == "" {
+		if stream, extra, ok := buildEmbeddedOCSStream(item, coursewareInfo); ok {
+			title := firstNonEmpty(textValue(item, "lessonName", "videoName", "contentName", "title", "name", "subject"), fallbackTitle)
+			extra["tenantId"] = firstNonEmpty(textValue(coursewareInfo, "tenantId"), CCTALK_TENANT_ID)
+			extra["courseware_info"] = coursewareInfo
+			extra["playback_type"] = playbackType(item, extra)
+			return &extractor.MediaInfo{Site: "cctalk", Title: util.SanitizeFilename(title), Streams: map[string]extractor.Stream{"best": stream}, Extra: extra}, nil
+		}
+		if stream, extra, ok := a.resolveOCSStream(coursewareInfo); ok {
+			title := firstNonEmpty(textValue(item, "lessonName", "videoName", "contentName", "title", "name", "subject"), fallbackTitle)
+			extra["tenantId"] = firstNonEmpty(textValue(coursewareInfo, "tenantId"), CCTALK_TENANT_ID)
+			extra["courseware_info"] = coursewareInfo
+			extra["playback_type"] = playbackType(item, extra)
+			return &extractor.MediaInfo{Site: "cctalk", Title: util.SanitizeFilename(title), Streams: map[string]extractor.Stream{"best": stream}, Extra: extra}, nil
+		}
+	} else if len(coursewareInfo) > 0 {
+		ocsHeaders = ocsHeadersFor(coursewareInfo)
+		ocsExtra["courseware_info"] = coursewareInfo
+	}
 	if mediaURL == "" {
 		return nil, fmt.Errorf("cctalk media URL missing")
 	}
 	title := firstNonEmpty(textValue(item, "lessonName", "videoName", "contentName", "title", "name", "subject"), fallbackTitle)
+	extra := map[string]any{"tenantId": firstNonEmpty(textValue(coursewareInfo, "tenantId"), textValue(item, "tenantId"), CCTALK_TENANT_ID)}
+	for k, v := range ocsExtra {
+		extra[k] = v
+	}
+	extra["playback_type"] = playbackType(item, extra)
 	return &extractor.MediaInfo{
 		Site:  "cctalk",
 		Title: util.SanitizeFilename(title),
 		Streams: map[string]extractor.Stream{
-			"best": {Quality: "best", URLs: []string{mediaURL}, Format: pickFormat(mediaURL), Headers: a.headers},
+			"best": {Quality: "best", URLs: []string{mediaURL}, Format: pickFormat(mediaURL), Headers: ocsHeaders, NeedMerge: pickFormat(mediaURL) == "m3u8"},
 		},
-		Extra: map[string]any{"tenantId": firstNonEmpty(textValue(item, "tenantId"), CCTALK_TENANT_ID)},
+		Extra: extra,
 	}, nil
 }
 
@@ -309,12 +356,12 @@ func findMediaURL(v any) string {
 			}
 		}
 	case map[string]any:
-		for _, k := range []string{"videoUrl", "playUrl", "m3u8Url", "hlsUrl", "mediaUrl", "mediaURL", "mp4URL", "downloadUrl", "url"} {
+		for _, k := range []string{"videoUrl", "playUrl", "m3u8Url", "hlsUrl", "mediaUrl", "mediaURL", "mp4URL", "downloadUrl", "media_url", "fileUrl", "fileURL", "url"} {
 			if u := findMediaURL(x[k]); u != "" {
 				return u
 			}
 		}
-		for _, k := range []string{"playInfo", "ocsInfo", "videoInfo", "mediaInfo", "coursewareInfo", "detail", "raw"} {
+		for _, k := range []string{"playInfo", "ocsInfo", "videoInfo", "mediaInfo", "coursewareInfo", "courseWareInfo", "contentInfo", "resourceInfo", "activityInfo", "lessonInfo", "detail", "raw"} {
 			if u := findMediaURL(x[k]); u != "" {
 				return u
 			}
@@ -325,7 +372,9 @@ func findMediaURL(v any) string {
 
 func looksMediaURL(s string) bool {
 	l := strings.ToLower(s)
-	return (strings.HasPrefix(l, "http") || strings.HasPrefix(l, "//") || strings.HasPrefix(l, "/")) && (strings.Contains(l, ".m3u8") || strings.Contains(l, ".mp4"))
+	return strings.HasPrefix(strings.TrimSpace(s), "#EXTM3U") ||
+		((strings.HasPrefix(l, "http") || strings.HasPrefix(l, "//") || strings.HasPrefix(l, "/")) &&
+			(strings.Contains(l, ".m3u8") || strings.Contains(l, ".mp4") || strings.Contains(l, ".flv") || strings.Contains(l, ".m4a") || strings.Contains(l, ".mp3")))
 }
 
 func normalizeMediaURL(s string) string {
@@ -382,8 +431,14 @@ func extractFirst(re *regexp.Regexp, s string) string {
 }
 
 func pickFormat(s string) string {
-	if strings.Contains(strings.ToLower(s), ".m3u8") {
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, ".m3u8") || strings.HasPrefix(strings.TrimSpace(s), "#EXTM3U") || strings.Contains(lower, "mpegurl") {
 		return "m3u8"
+	}
+	for _, ext := range []string{"mp4", "flv", "m4a", "mp3", "pdf", "zip", "rar", "7z", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "html"} {
+		if strings.Contains(lower, "."+ext) {
+			return ext
+		}
 	}
 	return "mp4"
 }
