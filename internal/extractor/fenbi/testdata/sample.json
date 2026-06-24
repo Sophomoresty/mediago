@@ -1,7 +1,6 @@
 {
-  "code": 0,
   "data": {
-    "title": "test_course",
-    "list": []
+    "title": "Fenbi Sample",
+    "video_url": "https://cdn.example/fenbi.mp4"
   }
 }

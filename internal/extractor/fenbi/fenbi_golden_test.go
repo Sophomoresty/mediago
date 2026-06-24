@@ -4,31 +4,60 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 )
 
-// TestExtractMock feeds a fixture API response through Extract() via httptest
-// and asserts the returned MediaInfo has playable content.
-// To use: replace fixtureJSON with a real API response captured from the site.
 func TestExtractMock(t *testing.T) {
-	// TODO: Replace with real API response captured from fenbi
-	fixtureJSON := `{"code":0,"data":{"title":"test","list":[]}}`
-
+	fixture := mustReadFixture(t, "testdata/sample.json")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(fixtureJSON))
+		_, _ = w.Write(fixture)
 	}))
 	defer srv.Close()
 
-
-	_, err := extractor.Match(srv.URL + "/course/test")
-	// The mock URL may not match the extractor pattern; this test validates
-	// the fixture parsing path once a real URL pattern + fixture are provided.
-	if err != nil {
-		t.Skipf("extractor pattern not matched (expected until fixture URL is configured): %v", err)
+	testURL := srv.URL + "/mock?target=https://pc.fenbi.com/course?lectureId=1&episodeId=2"
+	if _, err := extractor.Match(testURL); err != nil {
+		t.Fatalf("test URL should match extractor pattern: %v", err)
 	}
 
-	_ = json.NewEncoder  // keep import
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("fetch fixture server: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fixture server status = %d, want 200", resp.StatusCode)
+	}
+
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode fixture response: %v", err)
+	}
+	if payload == nil {
+		t.Fatal("fixture payload is nil")
+	}
+
+	_, err = (&Fenbi{}).Extract(testURL, &extractor.ExtractOpts{})
+	if err == nil {
+		t.Fatal("expected auth error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "requires") {
+		t.Fatalf("error = %v, want auth error", err)
+	}
+}
+
+func mustReadFixture(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if !json.Valid(b) {
+		t.Fatalf("fixture %s is not valid json", path)
+	}
+	return b
 }

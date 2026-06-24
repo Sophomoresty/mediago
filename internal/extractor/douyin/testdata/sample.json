@@ -1,7 +1,13 @@
 {
-  "code": 0,
-  "data": {
-    "title": "test_course",
-    "list": []
+  "aweme_id": "1234567890123456789",
+  "desc": "Douyin Sample",
+  "create_time": 1710000000,
+  "author": {
+    "nickname": "Douyin Tester"
+  },
+  "video": {
+    "play_addr": {
+      "uri": "v0200fg10000mockvideoid"
+    }
   }
 }

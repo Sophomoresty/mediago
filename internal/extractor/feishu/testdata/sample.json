@@ -1,7 +1,6 @@
 {
-  "code": 0,
   "data": {
-    "title": "test_course",
-    "list": []
+    "name": "Feishu Sample",
+    "url": "https://cdn.example/feishu.mp4"
   }
 }

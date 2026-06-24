@@ -1,7 +1,7 @@
 {
-  "code": 0,
-  "data": {
-    "title": "test_course",
-    "list": []
+  "code": 200,
+  "result": {
+    "title": "Htknow Sample",
+    "url": "https://cdn.example/htknow.mp4"
   }
 }

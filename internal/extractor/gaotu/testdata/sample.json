@@ -1,7 +1,6 @@
 {
-  "code": 0,
   "data": {
-    "title": "test_course",
-    "list": []
+    "title": "Gaotu Sample",
+    "url": "https://cdn.example/gaotu.mp4"
   }
 }

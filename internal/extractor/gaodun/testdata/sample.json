@@ -1,7 +1,6 @@
 {
-  "code": 0,
   "data": {
-    "title": "test_course",
-    "list": []
+    "title": "Gaodun Sample",
+    "video_url": "https://cdn.example/gaodun.mp4"
   }
 }

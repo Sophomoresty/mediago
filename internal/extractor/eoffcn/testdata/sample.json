@@ -1,7 +1,7 @@
 {
-  "code": 0,
   "data": {
-    "title": "test_course",
-    "list": []
+    "title": "Eoffcn Sample",
+    "videoUrl": "https://cdn.example/eoffcn.mp4",
+    "lessonId": "lesson-1"
   }
 }
