@@ -101,7 +101,9 @@ func getTTWID() string {
 		return ""
 	}
 	defer resp.Body.Close()
-	io.ReadAll(resp.Body)
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		return ""
+	}
 
 	for _, c := range resp.Cookies() {
 		if c.Name == "ttwid" {
@@ -132,7 +134,10 @@ func resolve(rawURL string, ttwid string) (map[string]interface{}, error) {
 		if id := extractID(finalURL); id != "" {
 			awemeID = id
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read short URL response: %w", err)
+		}
 		return parseRouterData(string(body), awemeID)
 	}
 
@@ -156,7 +161,10 @@ func resolve(rawURL string, ttwid string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to fetch share page: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read share page: %w", err)
+	}
 
 	return parseRouterData(string(body), awemeID)
 }
@@ -316,8 +324,9 @@ func probeSize(client *util.Client, url string, headers map[string]string) int64
 		parts := strings.Split(cr, "/")
 		if len(parts) == 2 {
 			var size int64
-			fmt.Sscanf(parts[1], "%d", &size)
-			return size
+			if _, err := fmt.Sscanf(parts[1], "%d", &size); err == nil && size > 0 {
+				return size
+			}
 		}
 	}
 	return resp.ContentLength
