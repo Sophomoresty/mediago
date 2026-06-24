@@ -6,6 +6,7 @@
 |---|---|---|
 | Fenbi_Base.py:29-32 referer/origin/login check URLs | `referer`, `origin`, `login_check_url`, `ke_check_url` | ✓ |
 | Fenbi_Course.py:34 `course_list_url = 'https://ke.fenbi.com/win/v3/courses'` | `course_list_url` | ✓ |
+| Fenbi_Course.py:455-510 course prefix + visible lecture enumeration | `resolveVisibleLectures` / `fetchCoursePrefixes` / `fetchVisibleLectures` | ✓ |
 | Fenbi_Course.py:35-39 visible/lecture/detail/summary/lectureset URLs | corresponding constants with `%s` | ✓ |
 | Fenbi_Course.py:40-44 episode nodes/detail/media meta URLs | corresponding constants with `%s` | ✓ |
 | Fenbi_Course.py:45-46 material URLs | `material_url`, `vertical_material_url` | ✓ |
@@ -29,6 +30,7 @@
 | `title`, `name`, `episodeTitle`, `videoName`, `courseTitle`, `lectureTitle` | `pickTitle` / `collectEpisodes` | ✓ |
 | media meta `url`, `mediaUrl`, `path`, `files/list/streams/data` | `findMediaURL` | ✓ |
 | route `prefix`, `lecture_id`, `episode_id` | `parseIDs` | ✓ |
+| material candidates, url extraction, media meta fallback | `collectMaterialCandidates` / `pickURLFromResponse` / `resolveMaterialURL` / `resolveEpisode` | ✓ |
 
 ## 阻塞步骤
 
