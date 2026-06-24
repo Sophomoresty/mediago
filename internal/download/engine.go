@@ -196,6 +196,30 @@ func (e *Engine) downloadSegments(urls []string, outPath string, headers map[str
 }
 
 func (e *Engine) downloadSeg(url, path string, headers map[string]string) error {
+	retries := e.opts.Retries
+	if retries <= 0 {
+		retries = 3
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(1<<(attempt-1)) * time.Second)
+		}
+
+		if err := e.downloadSegOnce(url, path, headers); err != nil {
+			lastErr = err
+			os.Remove(path)
+			os.Remove(path + ".part")
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("segment download failed after %d attempts: %w", retries+1, lastErr)
+}
+
+func (e *Engine) downloadSegOnce(url, path string, headers map[string]string) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -215,14 +239,24 @@ func (e *Engine) downloadSeg(url, path string, headers map[string]string) error 
 		return fmt.Errorf("segment HTTP %d: %s", resp.StatusCode, url)
 	}
 
-	f, err := os.Create(path)
+	partPath := path + ".part"
+	f, err := os.Create(partPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	_, err = io.Copy(f, resp.Body)
-	return err
+	_, copyErr := io.Copy(f, resp.Body)
+	closeErr := f.Close()
+	if copyErr != nil {
+		os.Remove(partPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		os.Remove(partPath)
+		return closeErr
+	}
+
+	return os.Rename(partPath, path)
 }
 
 func concatFiles(dir, outPath string, count int) error {
