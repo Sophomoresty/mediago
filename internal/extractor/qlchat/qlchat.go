@@ -18,6 +18,7 @@ import (
 
 const (
 	referer                 = "https://m.qlchat.com"
+	trainReferer            = "https://m.qianliao.net"
 	course_list_url         = "https://m.qlchat.com/api/wechat/transfer/h5/live/purchaseCourse"
 	learn_list_url          = "https://m.qlchat.com/api/wechat/transfer/h5/topic/listRecentLearn"
 	info_url                = "https://m.qlchat.com/api/wechat/transfer/h5/interact/getCourseList"
@@ -41,15 +42,23 @@ const (
 	topic_auth_url          = "https://m.qlchat.com/api/wechat/topic/auth?topicId=%s"
 	topic_auth_transfer_url = "https://m.qlchat.com/api/wechat/transfer/h5/topic/topicAuth"
 	join_free_course_url    = "https://m.qlchat.com/api/wechat/transfer/h5/topic/joinFreeCourse"
+	train_user_info_url     = "https://m.qianliao.net/financial/api/transfer?url=/gate/user/getUserInfoById"
+	train_course_list_url   = "https://m.qianliao.net/financial/api/transfer?url=/gate/course/myCourseList"
+	train_camp_url          = "https://m.qianliao.net/financial/api/transfer?url=/gate/learningCalendar/campData"
+	train_period_url        = "https://m.qianliao.net/financial/open-course?periodId=%s"
 	train_info_url          = "https://m.qianliao.net/financial/api/transfer?url=%s"
 	train_video_url         = "https://m.qianliao.net/financial/listen-video?topicId=%s&campId=%s"
 	train_audio_url         = "https://m.qianliao.net/financial/listen-audio?topicId=%s&campId=%s"
 	train_course_live_url   = "https://m.qianliao.net/financial/tc-live-course?topicId=%s&campId=%s&roomId=%s"
 	train_live_url          = "https://m.qianliao.net/financial/tc-public-live?topicId=%s&periodId=%s&roomId=%s"
 	train_m3u8_url          = "https://playvideo.qcloud.com/getplayinfo/v4/%s/%s?psign=%s"
+	train_order_url         = "https://m.qianliao.net/financial/api/transfer?url=/gate/order/getOrderListDerail"
 )
 
-var patterns = []string{`(?:[\w-]+\.)?(?:qlchat|qianliaoknow)\.com/`}
+var patterns = []string{
+	`(?:[\w-]+\.)?(?:qlchat|qianliaoknow)\.com/`,
+	`(?:[\w-]+\.)?(?:qianliao\.net|qianliao\.tv|xingqudao\.cn|xingqudao\.net|nicegoods\.cn)/`,
+}
 
 func init() {
 	extractor.Register(&Qlchat{}, extractor.SiteInfo{Name: "Qlchat", URL: "qlchat.com", NeedAuth: true})
@@ -62,6 +71,9 @@ func (q *Qlchat) Patterns() []string { return patterns }
 func (q *Qlchat) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("qlchat requires login cookies")
+	}
+	if isQianliaoTrainURL(rawURL) {
+		return extractQianliaoTrain(rawURL, opts)
 	}
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
@@ -314,7 +326,10 @@ func getJSONInto(c *util.Client, api string, h map[string]string, out any) error
 	return json.Unmarshal([]byte(body), out)
 }
 func postJSON(c *util.Client, api string, payload any, h map[string]string) (string, error) {
-	b, _ := json.Marshal(payload)
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
 	hh := map[string]string{"Content-Type": "application/json;charset=UTF-8"}
 	for k, v := range h {
 		hh[k] = v
