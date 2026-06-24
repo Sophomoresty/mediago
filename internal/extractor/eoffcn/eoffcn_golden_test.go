@@ -19,6 +19,11 @@ func TestExtractMock(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	testURL := srv.URL + "/mock?target=https://www.eoffcn.com/course?package_id=1&lesson_id=1"
+	if _, err := extractor.Match(testURL); err != nil {
+		t.Fatalf("test URL should match extractor pattern: %v", err)
+	}
+
 	resp, err := http.Get(srv.URL)
 	if err != nil {
 		t.Fatalf("fetch fixture server: %v", err)
@@ -36,7 +41,7 @@ func TestExtractMock(t *testing.T) {
 		t.Fatal("fixture payload is nil")
 	}
 
-	_, err = (&Eoffcn{}).Extract(srv.URL+"/course/test", &extractor.ExtractOpts{})
+	_, err = (&Eoffcn{}).Extract(testURL, &extractor.ExtractOpts{})
 	if err == nil {
 		t.Fatal("expected auth error")
 	}

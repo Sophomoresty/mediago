@@ -52,7 +52,12 @@ func TestExtractMock(t *testing.T) {
 	restoreTransport := redirectDefaultTransport(t, shareServer.Listener.Addr().String(), apiServer.Listener.Addr().String())
 	defer restoreTransport()
 
-	info, err := (&Douyin{}).Extract("http://v.douyin.com/mock/", &extractor.ExtractOpts{})
+	testURL := "http://v.douyin.com/mock/"
+	if _, err := extractor.Match(testURL); err != nil {
+		t.Fatalf("test URL should match extractor pattern: %v", err)
+	}
+
+	info, err := (&Douyin{}).Extract(testURL, &extractor.ExtractOpts{})
 	if err != nil {
 		t.Fatalf("Extract returned error: %v", err)
 	}
