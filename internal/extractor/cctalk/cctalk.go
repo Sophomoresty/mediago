@@ -154,6 +154,209 @@ func (a *apiClient) requestJSON(u string, data map[string]string, method string)
 	return out
 }
 
+func (a *apiClient) getCourseDetail(courseID string) map[string]any {
+	if strings.TrimSpace(courseID) == "" {
+		return nil
+	}
+	endpoints := [][2]string{
+		{fmt.Sprintf("/course/%s/course_detail", courseID), "v1.1"},
+		{fmt.Sprintf("/course/%s/course_detail", courseID), "v1.2"},
+		{fmt.Sprintf("/course/%s/detail", courseID), "v1.1"},
+	}
+	for _, ep := range endpoints {
+		data := asMap(extractData(a.requestAPI(ep[0], nil, "", ep[1])))
+		if len(data) > 0 {
+			return data
+		}
+	}
+	// fallback: params-based detail
+	data := asMap(extractData(a.requestAPI("/course/detail", map[string]string{"courseId": courseID}, "", "v1.1")))
+	if len(data) > 0 {
+		return data
+	}
+	return nil
+}
+
+func (a *apiClient) getGroupInfo(groupID string) map[string]any {
+	if strings.TrimSpace(groupID) == "" {
+		return nil
+	}
+	for _, path := range []string{
+		fmt.Sprintf("/webapi/im/v1.3/group/%s/info?isRichInfo=true", groupID),
+		fmt.Sprintf("/webapi/im/v1.1/group/%s/baseinfo", groupID),
+	} {
+		data := asMap(extractData(a.requestJSON(CCTALK_BASE_URL+path, nil, "")))
+		if len(data) > 0 {
+			data["groupId"] = groupID
+			if _, ok := data["courseId"]; !ok {
+				data["courseId"] = groupID
+			}
+			if gn := textValue(data, "groupName"); gn != "" {
+				if _, ok := data["courseName"]; !ok {
+					data["courseName"] = gn
+				}
+			}
+			return data
+		}
+	}
+	return nil
+}
+
+func (a *apiClient) getSeriesInfo(seriesID string) map[string]any {
+	if strings.TrimSpace(seriesID) == "" {
+		return nil
+	}
+	for _, ep := range [][2]string{
+		{fmt.Sprintf("/series/%s/get_series_info", seriesID), "v1.1"},
+		{fmt.Sprintf("/series/%s/get_series_info", seriesID), "v1.2"},
+	} {
+		data := asMap(extractData(a.requestAPI(ep[0], nil, "", ep[1])))
+		if len(data) > 0 {
+			data["seriesId"] = seriesID
+			return data
+		}
+	}
+	return nil
+}
+
+func (a *apiClient) getGroupSeries(groupID string) []map[string]any {
+	if strings.TrimSpace(groupID) == "" {
+		return nil
+	}
+	var result []map[string]any
+	seen := map[string]bool{}
+	offset := 0
+	for i := 0; i < 20; i++ {
+		var page []any
+		for _, version := range []string{"v1.2", "v1.1"} {
+			data := extractData(a.requestAPI(
+				fmt.Sprintf("/series/group/%s/series", groupID),
+				map[string]string{"limit": "50", "start": fmt.Sprint(offset)},
+				"", version,
+			))
+			if list := extractList(data); len(list) > 0 {
+				page = list
+				break
+			}
+		}
+		for _, item := range page {
+			m := asMap(item)
+			if m == nil {
+				continue
+			}
+			m["groupId"] = groupID
+			if _, ok := m["courseId"]; !ok {
+				m["courseId"] = firstNonEmpty(textValue(m, "seriesId"), textValue(m, "id"))
+			}
+			if _, ok := m["courseName"]; !ok {
+				m["courseName"] = firstNonEmpty(textValue(m, "seriesName"), textValue(m, "name"), textValue(m, "title"))
+			}
+			key := firstNonEmpty(textValue(m, "seriesId"), textValue(m, "courseId"), textValue(m, "id"))
+			if key != "" && !seen[key] {
+				seen[key] = true
+				result = append(result, m)
+			}
+		}
+		if len(page) == 0 || len(page) < 50 {
+			break
+		}
+		offset += len(page)
+	}
+	return result
+}
+
+func (a *apiClient) getLessonInfo(lessonID string) map[string]any {
+	if strings.TrimSpace(lessonID) == "" {
+		return nil
+	}
+	for _, source := range []string{"0", "1", "2", ""} {
+		data := asMap(extractData(a.requestAPI("/course/get_lesson_info",
+			map[string]string{"lessonId": lessonID, "source": source, "withCourse": "true"},
+			"", "v1.1")))
+		if len(data) > 0 {
+			return data
+		}
+	}
+	return nil
+}
+
+func (a *apiClient) getSubscribeCourses() []map[string]any {
+	var result []map[string]any
+	seen := map[string]bool{}
+
+	// Phase 1: my_group_list
+	offset := 0
+	for i := 0; i < 20; i++ {
+		body, err := a.c.GetString(
+			fmt.Sprintf(my_group_list_url, offset, 20, ""),
+			mergeSS(a.headers, map[string]string{"Referer": mycourse_url, "Origin": mobile_url}),
+		)
+		if err != nil {
+			break
+		}
+		var raw map[string]any
+		if json.Unmarshal([]byte(body), &raw) != nil {
+			break
+		}
+		data := asMap(extractData(raw))
+		page := extractList(data)
+		for _, item := range page {
+			m := asMap(item)
+			if m == nil {
+				continue
+			}
+			key := firstNonEmpty(textValue(m, "courseId", "seriesId", "groupId", "id"))
+			if key != "" && !seen[key] {
+				seen[key] = true
+				result = append(result, m)
+			}
+		}
+		hasMore := false
+		if data != nil {
+			if np, ok := data["nextPage"]; ok {
+				if npInt, ok2 := np.(float64); ok2 && int(npInt) > offset {
+					offset = int(npInt)
+					hasMore = true
+				}
+			}
+		}
+		if len(page) == 0 || !hasMore {
+			break
+		}
+	}
+
+	// Phase 2: course_subscribe_list per type
+	for _, courseType := range []string{"1", "2", "0"} {
+		timeline := ""
+		for i := 0; i < 20; i++ {
+			params := map[string]string{"limit": "50", "timeline": timeline, "courseType": courseType}
+			data := asMap(extractData(a.requestAPI("/user/course_subscribe_list", params, "", "v1.1")))
+			page := extractList(data)
+			for _, item := range page {
+				m := asMap(item)
+				if m == nil {
+					continue
+				}
+				key := firstNonEmpty(textValue(m, "courseId", "seriesId", "groupId", "id"))
+				if key != "" && !seen[key] {
+					seen[key] = true
+					result = append(result, m)
+				}
+			}
+			nextTimeline := ""
+			if data != nil {
+				nextTimeline = firstNonEmpty(textValue(data, "nextTimeline", "next_timeline", "timeline"))
+			}
+			if len(page) == 0 || nextTimeline == "" || nextTimeline == timeline {
+				break
+			}
+			timeline = nextTimeline
+		}
+	}
+
+	return result
+}
+
 func (a *apiClient) getCourseStructs(courseID string) any {
 	for _, version := range []string{"v1.1", "v1.2"} {
 		data := extractData(a.requestAPI(fmt.Sprintf("/course/%s/course_structs", courseID), map[string]string{"orderType": "1"}, "", version))
@@ -258,7 +461,7 @@ func mediaFromMap(a *apiClient, item map[string]any, fallbackTitle string) (*ext
 		ocsExtra["courseware_info"] = coursewareInfo
 	}
 	if mediaURL == "" {
-		return nil, fmt.Errorf("cctalk media URL missing")
+		return nil, classifyBlocked(item)
 	}
 	title := firstNonEmpty(textValue(item, "lessonName", "videoName", "contentName", "title", "name", "subject"), fallbackTitle)
 	extra := map[string]any{"tenantId": firstNonEmpty(textValue(coursewareInfo, "tenantId"), textValue(item, "tenantId"), CCTALK_TENANT_ID)}
@@ -441,6 +644,17 @@ func pickFormat(s string) string {
 		}
 	}
 	return "mp4"
+}
+
+func mergeSS(base, extra map[string]string) map[string]string {
+	out := make(map[string]string, len(base)+len(extra))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }
 
 func firstNonEmpty(values ...string) string {

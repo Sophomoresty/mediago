@@ -2,6 +2,10 @@
 package yangcong
 
 import (
+	"crypto/aes"
+	"crypto/md5"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/util"
@@ -26,12 +31,21 @@ const (
 	videoAddressesURL = apiHost + "/videos/addresses"
 	orderAuthURL      = apiHost + "/user-auths/order/auth"
 	meURL             = apiHost + "/me"
+	hlsSaltURL        = apiHost + "/videoBase/getHlsEncryptSalt"
+	hlsKeyURL         = apiHost + "/videoBase/getHlsEncryptKey?id=%s&x-key=%s"
+
+	// Yangcong_Config constants
+	hlsSaltFallback = "yangcong"           // YANGCONG_HLS_SALT_FALLBACK
+	hlsKeyVersion   = "1.0.12-beta.18"     // YANGCONG_HLS_KEY_VERSION
+	aesECBKey       = "1234567890123456"    // AES ECB key for encrypt_body decryption
+	ycUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 var (
 	patterns     = []string{`(?:[\w-]+\.)?(?:yangcong345|yangcongxueyuan)\.com/`}
 	specialIDRe  = regexp.MustCompile(`(?:special-course/|special-)([\w-]+)`)
 	titleCleanRe = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
+	hlsURIRe     = regexp.MustCompile(`URI="([^"]+)"`)
 )
 
 func init() {
@@ -275,11 +289,110 @@ func resolveVideo(c *util.Client, headers map[string]string, v ycVideo) (*extrac
 	if err != nil {
 		return nil, fmt.Errorf("yangcong video address: %w", err)
 	}
-	addr := pickAddress(resp)
+	addressList := extractAddressList(resp)
+
+	// Source logic: prefer HLS, then try HLS m3u8 rewrite, fall back to mp4.
+	addr := selectAddress(addressList, "hls")
+	format := "m3u8"
+	if addr != "" && strings.Contains(addr, ".m3u8") {
+		rewritten := rewriteHLSM3U8(c, headers, addr, v.VideoID)
+		if rewritten != "" {
+			return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: "m3u8", Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID, "m3u8_text": rewritten}}, nil
+		}
+	}
+
+	// Fall back: mp4 or any available format
+	addr = selectAddress(addressList, "mp4")
+	if addr == "" {
+		addr = pickAddress(resp)
+	}
 	if addr == "" {
 		return nil, fmt.Errorf("yangcong: no address for video %s", v.VideoID)
 	}
-	return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: pickFormat(addr), Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID}}, nil
+	format = pickFormat(addr)
+	return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: format, Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID}}, nil
+}
+
+// extractAddressList pulls out the address array from the video addresses response.
+// Source: resp.get("videoList", [])[0].get("address", [])
+func extractAddressList(resp map[string]any) []map[string]any {
+	videoList, _ := resp["videoList"].([]any)
+	if len(videoList) == 0 {
+		// Try the direct response walk
+		if list, ok := resp["list"].([]any); ok {
+			videoList = list
+		}
+	}
+	if len(videoList) == 0 {
+		return nil
+	}
+	first := asMap(videoList[0])
+	if first == nil {
+		return nil
+	}
+	rawAddrs, _ := first["address"].([]any)
+	if len(rawAddrs) == 0 {
+		return nil
+	}
+	var out []map[string]any
+	for _, a := range rawAddrs {
+		if m := asMap(a); m != nil {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// selectAddress implements the source's _select_address with prefer_format.
+// It iterates format priority (prefer_format first, then the other, then ycm),
+// then clarity priority (fullHigh > high > middle > low for FHD mode),
+// then platform priority (pc > mobile > ""),
+// skipping .ycm URLs.
+func selectAddress(addressList []map[string]any, preferFormat string) string {
+	if len(addressList) == 0 {
+		return ""
+	}
+	// Build format iteration order: [preferFormat, otherFormat, ycm]
+	var formatOrder []string
+	if preferFormat == "mp4" {
+		formatOrder = []string{"mp4", "hls", "ycm"}
+	} else {
+		formatOrder = []string{"hls", "mp4", "ycm"}
+	}
+	// Clarity priority for FHD mode (default)
+	clarityOrder := []string{"fullHigh", "high", "middle", "low"}
+	// Platform priority
+	platformOrder := []string{"pc", "mobile", ""}
+
+	for _, fmt := range formatOrder {
+		for _, clarity := range clarityOrder {
+			for _, platform := range platformOrder {
+				for _, addr := range addressList {
+					if firstString(addr, "format") != fmt {
+						continue
+					}
+					if firstString(addr, "clarity") != clarity {
+						continue
+					}
+					if platform != "" && firstString(addr, "platform") != platform {
+						continue
+					}
+					u := firstString(addr, "url")
+					if u != "" && !strings.HasSuffix(u, ".ycm") {
+						return u
+					}
+				}
+			}
+		}
+	}
+	// Fallback: any address with a non-.ycm URL
+	for _, addr := range addressList {
+		u := firstString(addr, "url")
+		if u != "" && !strings.HasSuffix(u, ".ycm") {
+			return u
+		}
+	}
+	return ""
 }
 
 func pickAddress(v any) string {
@@ -354,4 +467,262 @@ func pickFormat(u string) string {
 		return "m3u8"
 	}
 	return "mp4"
+}
+
+// --- HLS key decryption and m3u8 rewriting (source: Yangcong_Course) ---
+
+// safeB64Decode decodes a URL-safe or standard base64 string with padding fix.
+func safeB64Decode(value string) []byte {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	value = strings.ReplaceAll(value, "-", "+")
+	value = strings.ReplaceAll(value, "_", "/")
+	if mod := len(value) % 4; mod != 0 {
+		value += strings.Repeat("=", 4-mod)
+	}
+	data, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// decryptEncryptBody decrypts an AES-ECB encrypted base64 body using key "1234567890123456".
+func decryptEncryptBody(encryptBody string) string {
+	data := safeB64Decode(encryptBody)
+	if len(data) == 0 {
+		return ""
+	}
+	block, err := aes.NewCipher([]byte(aesECBKey))
+	if err != nil {
+		return ""
+	}
+	bs := block.BlockSize()
+	if len(data)%bs != 0 {
+		return ""
+	}
+	// ECB mode decryption
+	out := make([]byte, len(data))
+	for i := 0; i < len(data); i += bs {
+		block.Decrypt(out[i:i+bs], data[i:i+bs])
+	}
+	// PKCS7 unpadding
+	if len(out) == 0 {
+		return ""
+	}
+	pad := int(out[len(out)-1])
+	if pad > 0 && pad <= bs && pad <= len(out) {
+		out = out[:len(out)-pad]
+	}
+	return string(out)
+}
+
+// decodeEncryptedJSON handles the encrypt_body wrapper from yangcong API responses.
+func decodeEncryptedJSON(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	eb, ok := data["encrypt_body"].(string)
+	if !ok || eb == "" {
+		return data
+	}
+	plaintext := decryptEncryptBody(eb)
+	if plaintext == "" {
+		return data
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(plaintext), &result); err != nil {
+		return data
+	}
+	return result
+}
+
+// getHLSSalt fetches the HLS encryption salt from the API.
+// Falls back to YANGCONG_HLS_SALT_FALLBACK ("yangcong").
+func getHLSSalt(c *util.Client, headers map[string]string) string {
+	h := map[string]string{
+		"Content-Type": "application/json;charset=UTF-8",
+		"params-style": "encrypt",
+		"User-Agent":   ycUserAgent,
+	}
+	// Merge in authorization from headers
+	for k, v := range headers {
+		if strings.EqualFold(k, "authorization") {
+			h[k] = v
+		}
+	}
+	body, err := c.GetString(hlsSaltURL, h)
+	if err != nil {
+		return hlsSaltFallback
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		return hlsSaltFallback
+	}
+	decoded := decodeEncryptedJSON(raw)
+	dataObj := asMap(decoded["data"])
+	if dataObj == nil {
+		// Try direct .salt access
+		dataObj = decoded
+	}
+	saltB64 := firstString(dataObj, "salt")
+	if saltB64 == "" {
+		return hlsSaltFallback
+	}
+	saltBytes := safeB64Decode(saltB64)
+	if len(saltBytes) == 0 {
+		return hlsSaltFallback
+	}
+	return string(saltBytes)
+}
+
+// buildHLSXKey constructs the x-key parameter for HLS key requests.
+// Source: _build_hls_x_key(self, video_id)
+func buildHLSXKey(c *util.Client, headers map[string]string, videoID string) string {
+	salt := getHLSSalt(c, headers)
+	ts := fmt.Sprintf("%d", time.Now().UnixMilli())
+	raw := fmt.Sprintf("v=2&sMethod=md5&vId=%s&timestamp=%s", videoID, ts)
+	h := md5.Sum([]byte(raw + salt))
+	sig := hex.EncodeToString(h[:])
+	payload := raw + "&signature=" + sig
+	encoded := base64.StdEncoding.EncodeToString([]byte(payload))
+	return url.QueryEscape(encoded)
+}
+
+// getHLSKeyBytes fetches the 16-byte AES key for HLS decryption.
+// Source: _get_hls_key_bytes(self, key_url, video_id)
+func getHLSKeyBytes(c *util.Client, headers map[string]string, keyURL string, videoID string) []byte {
+	if keyURL == "" || videoID == "" {
+		return nil
+	}
+	// Parse the key URL to extract the "id" parameter
+	var keyID string
+	parsed, err := url.Parse(keyURL)
+	if err == nil {
+		qs := parsed.Query()
+		ids := qs["id"]
+		if len(ids) > 0 {
+			keyID = ids[0]
+		}
+	}
+	if keyID == "" {
+		return nil
+	}
+	// Build the API URL
+	xKey := buildHLSXKey(c, headers, videoID)
+	apiURL := apiHost + fmt.Sprintf("/videoBase/getHlsEncryptKey?id=%s&x-key=%s",
+		url.QueryEscape(keyID), xKey)
+
+	h := map[string]string{
+		"Content-Type": "application/json;charset=UTF-8",
+		"params-style": "encrypt",
+		"source":       "PC",
+		"userId":       "",
+		"env":          "online",
+		"version":      hlsKeyVersion,
+		"User-Agent":   ycUserAgent,
+	}
+	// Merge authorization
+	for k, v := range headers {
+		if strings.EqualFold(k, "authorization") {
+			h[k] = v
+		}
+	}
+	resp, err := c.Get(apiURL, h)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil
+	}
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	if len(content) == 16 {
+		return content
+	}
+	return nil
+}
+
+// absolutizeHLSSegments converts relative segment paths in m3u8 text to absolute URLs.
+// Source: _absolutize_hls_segments(self, m3u8_text, m3u8_url)
+func absolutizeHLSSegments(m3u8Text string, m3u8URL string) string {
+	parts := strings.SplitAfterN(m3u8URL, "/", -1)
+	baseURL := ""
+	if idx := strings.LastIndex(m3u8URL, "/"); idx >= 0 {
+		baseURL = m3u8URL[:idx+1]
+	}
+	_ = parts
+	var lines []string
+	for _, line := range strings.Split(m3u8Text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			lines = append(lines, line)
+		} else {
+			// Relative path: join with base URL
+			absURL := baseURL + trimmed
+			if u, err := url.Parse(baseURL); err == nil {
+				if ref, err := url.Parse(trimmed); err == nil {
+					absURL = u.ResolveReference(ref).String()
+				}
+			}
+			lines = append(lines, absURL)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rewriteHLSM3U8 fetches an m3u8 manifest, replaces the EXT-X-KEY URI with
+// an inline hex key (fetched via the HLS key API), and absolutizes segment URLs.
+// Source: _rewrite_hls_m3u8(self, m3u8_url, video_id)
+func rewriteHLSM3U8(c *util.Client, headers map[string]string, m3u8URL string, videoID string) string {
+	if m3u8URL == "" {
+		return ""
+	}
+	h := map[string]string{
+		"Referer":    refererURL,
+		"User-Agent": util.RandomUA(),
+	}
+	// Merge authorization
+	for k, v := range headers {
+		if strings.EqualFold(k, "authorization") {
+			h[k] = v
+		}
+	}
+	resp, err := c.Get(m3u8URL, h)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	m3u8Text := string(body)
+
+	// Find URI="..." in EXT-X-KEY line
+	match := hlsURIRe.FindStringSubmatch(m3u8Text)
+	if match == nil {
+		// No encryption key URI found, just absolutize segments
+		return absolutizeHLSSegments(m3u8Text, m3u8URL)
+	}
+	origURI := match[1]
+
+	// Fetch the HLS key bytes
+	keyBytes := getHLSKeyBytes(c, headers, origURI, videoID)
+	if len(keyBytes) == 0 {
+		return ""
+	}
+	// Replace the URI with the hex-encoded key bytes
+	keyHex := hex.EncodeToString(keyBytes)
+	m3u8Text = strings.Replace(m3u8Text, origURI, keyHex, 1)
+
+	return absolutizeHLSSegments(m3u8Text, m3u8URL)
 }

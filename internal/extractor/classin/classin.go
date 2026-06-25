@@ -8,12 +8,14 @@
 package classin
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/url"
 	"regexp"
 	"sort"
@@ -30,6 +32,15 @@ const (
 	urlUserRecords = "https://a0d-cdn.eeo.cn/uc/classin_uc.php?action=getuserRecordclasses"
 	urlRecordGet   = "https://w0d-cdn.eeo.cn/lms/app/activity/recordClass/get"
 	urlW0sCDN      = "https://w0s-cdn.eeo.cn/files/pm3u8/"
+
+	// Course-tree APIs (host t0d-cdn.eeo.cn), aligned with Classin_Config.pyc.
+	urlCourseList   = "https://t0d-cdn.eeo.cn/course/app/member/course_list"
+	urlCategoryList = "https://t0d-cdn.eeo.cn/lms/app/category/list"
+	urlUnitList     = "https://t0d-cdn.eeo.cn/lms/app/course/studentUnitList"
+	urlUnitActivity = "https://t0d-cdn.eeo.cn/lms/app/course/studentUnitActivityList"
+	urlHomeworkGet  = "https://t0d-cdn.eeo.cn/lms/app/activity/homework/get"
+	urlFileDownInfo = "https://t0d-cdn.eeo.cn/lms/app/file/getDownInfo"
+	classinCDNBase  = "https://w0s-cdn.eeo.cn"
 
 	classinUID = "70755184"
 	classinKey = "EJAeISv47899WRMjdYK1769177711067"
@@ -108,6 +119,13 @@ func (ci *Classin) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		}
 		return &extractor.MediaInfo{Site: "classin", Title: "classin", Entries: entries}, nil
 	}
+
+	// No direct media resolved from the URL. Fall back to the bulk course tree
+	// (course_list -> studentUnitList -> studentUnitActivityList -> homework/get
+	// -> file/getDownInfo), aligned with Classin_Course.pyc.
+	if course, err := ci.extractCourseTree(c, parsed, headers); err == nil && course != nil {
+		return course, nil
+	}
 	return nil, fmt.Errorf("classin: no pm3u8/mp4 media found in record APIs")
 }
 
@@ -144,6 +162,49 @@ func postFormJSON(c *util.Client, api string, data map[string]string) (any, erro
 		return nil, err
 	}
 	return payload, nil
+}
+
+// postFormMap is postFormJSON typed to the standard ClassIn envelope so callers
+// can read error_info/data directly without re-walking an any tree.
+func postFormMap(c *util.Client, api string, data map[string]string) (classinEnvelope, error) {
+	var env classinEnvelope
+	headers := classinSignHeaders(data, "application/x-www-form-urlencoded")
+	body, err := c.PostForm(api, data, headers)
+	if err != nil {
+		return env, err
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		return env, err
+	}
+	return env, nil
+}
+
+// postJSONMap signs the JSON body keys (course_list is the only JSON endpoint)
+// and returns the parsed envelope. The signature still hashes the flat key=value
+// pairs, matching _create_sign_headers in the Python source.
+func postJSONMap(c *util.Client, api string, data map[string]string) (classinEnvelope, error) {
+	var env classinEnvelope
+	headers := classinSignHeaders(data, "application/json")
+	payload, err := json.Marshal(jsonBody(data))
+	if err != nil {
+		return env, err
+	}
+	resp, err := c.Post(api, bytes.NewReader(payload), headers)
+	if err != nil {
+		return env, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return env, fmt.Errorf("classin %s: HTTP %d", api, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return env, err
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return env, err
+	}
+	return env, nil
 }
 
 func resolveM3U8Token(c *util.Client, pm3u8Path string) (string, error) {

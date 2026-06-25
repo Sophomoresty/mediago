@@ -15,13 +15,18 @@
 package houda
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/extractor/shared"
@@ -383,6 +388,25 @@ func buildHoudaMaterialEntry(index int, item map[string]any, headers map[string]
 	}
 }
 
+// houdaCsslVideoItem represents a single video stream from the Houda-specific
+// CSSL /replay/video/play response. Each item carries primary and secondary
+// URLs plus quality descriptors used for quality-based sorting.
+type houdaCsslVideoItem struct {
+	Primary     string `json:"primary"`
+	Secondary   string `json:"secondary"`
+	Desc        string `json:"desc"`
+	QualityDesc string `json:"qualityDesc"`
+	Code        string `json:"code"`
+	Quality     string `json:"quality"`
+}
+
+// houdaCsslPlayResult holds the resolved CSSL play information for a lesson.
+type houdaCsslPlayResult struct {
+	Token     string
+	VideoList []houdaCsslVideoItem
+	AudioURL  string
+}
+
 type houdaLesson struct {
 	ID          any `json:"id"`
 	Title       any `json:"title"`
@@ -412,25 +436,47 @@ func buildHoudaEntry(c *util.Client, cid string, index int, lesson houdaLesson, 
 	roomID := firstText(lesson.RoomID, lesson.MainRoomID, lesson.CCLiveID)
 	recordID := firstText(lesson.RecordID)
 	direct := firstText(lesson.PlaybackMP4, lesson.PlaybackURL, lesson.LiveURL)
+	mp3 := firstText(lesson.PlaybackMP3)
 
 	streams := map[string]extractor.Stream{}
 	extra := map[string]any{"course_id": cid, "lesson_id": lessonID, "record_id": recordID, "room_id": roomID}
+	if mp3 != "" {
+		extra["playback_mp3"] = normalizeHoudaURL(mp3)
+	}
+
 	if roomID != "" && recordID != "" {
 		info, err := resolveHoudaCSSL(c, roomID, recordID, title, headers)
 		if err == nil {
-			extra["csslcloud_session_id"] = info.SessionID
-			for _, v := range info.VideoList {
-				if v.URL == "" {
+			extra["csslcloud_token"] = info.Token
+			extra["csslcloud_meta_url"] = urlCsslMeta
+			sortedVideos := sortHoudaVideosByQuality(info.VideoList)
+			for i, v := range sortedVideos {
+				videoURL := firstNonEmpty(v.Primary, v.Secondary)
+				if videoURL == "" {
 					continue
 				}
-				key := fmt.Sprintf("definition_%d", v.Definition)
-				streams[key] = extractor.Stream{Quality: key, URLs: []string{v.URL}, Format: mediaExt(v.URL), AudioURL: info.AudioURL, Headers: map[string]string{"Referer": urlHome}}
-			}
-			if info.VideoURL != "" && mediaExt(info.VideoURL) == "m3u8" {
-				if rewritten, err := rewriteHoudaM3U8(c, info.VideoURL, urlHome); err == nil {
-					extra["m3u8_text"] = rewritten
+				quality := firstNonEmpty(v.Desc, v.QualityDesc, v.Code, v.Quality, fmt.Sprintf("definition_%d", i))
+				streams[quality] = extractor.Stream{
+					Quality:  quality,
+					URLs:     []string{videoURL},
+					Format:   mediaExt(videoURL),
+					AudioURL: info.AudioURL,
+					Headers:  map[string]string{"Referer": urlHome},
 				}
 			}
+			// Expose best video URL for m3u8 rewriting.
+			if len(sortedVideos) > 0 {
+				bestURL := firstNonEmpty(sortedVideos[0].Primary, sortedVideos[0].Secondary)
+				if bestURL != "" && mediaExt(bestURL) == "m3u8" {
+					if rewritten, err := rewriteHoudaM3U8(c, bestURL, urlHome); err == nil {
+						extra["m3u8_text"] = rewritten
+					}
+				}
+			}
+			// Board video: genuinely requires local cv2+ffmpeg rendering (Houda_Local).
+			// Mark as blocked so callers know this is unavailable.
+			extra["board_video_blocked"] = true
+			extra["board_video_reason"] = "board video requires local OpenCV (cv2) frame rendering and ffmpeg compositing (Houda_Local); not reproducible via API extraction"
 		} else if direct == "" {
 			return nil, err
 		} else {
@@ -438,10 +484,11 @@ func buildHoudaEntry(c *util.Client, cid string, index int, lesson houdaLesson, 
 		}
 	}
 	if len(streams) == 0 && direct != "" {
-		fmtName := mediaExt(direct)
-		streams[fmtName] = extractor.Stream{Quality: "best", URLs: []string{direct}, Format: fmtName, Headers: map[string]string{"Referer": urlHome}}
+		directURL := normalizeHoudaURL(direct)
+		fmtName := mediaExt(directURL)
+		streams[fmtName] = extractor.Stream{Quality: "best", URLs: []string{directURL}, Format: fmtName, Headers: map[string]string{"Referer": urlHome}}
 		if fmtName == "m3u8" {
-			if rewritten, err := rewriteHoudaM3U8(c, direct, urlHome); err == nil {
+			if rewritten, err := rewriteHoudaM3U8(c, directURL, urlHome); err == nil {
 				extra["m3u8_text"] = rewritten
 			}
 		}
@@ -452,7 +499,15 @@ func buildHoudaEntry(c *util.Client, cid string, index int, lesson houdaLesson, 
 	return &extractor.MediaInfo{Site: "houda", Title: fmt.Sprintf("[%d]--%s", index, title), Streams: streams, Extra: extra}, nil
 }
 
-func resolveHoudaCSSL(c *util.Client, roomID, recordID, title string, headers map[string]string) (*shared.CssLcloudPlayInfo, error) {
+// resolveHoudaCSSL runs the Houda-specific CSSL chain:
+//
+//  1. Resolve CC callback to get csslcloud userId/roomId/recordId/viewerToken.
+//  2. POST /replay/user/login  (JSON body) to get X-HD-Token.
+//  3. GET  /replay/video/play  (query params + X-HD-Token header) to get video list.
+//
+// Falls back to the shared CssLcloudResolvePlayInfo helper if the native chain
+// fails, so existing tests and direct-csslcloud-URL flows keep working.
+func resolveHoudaCSSL(c *util.Client, roomID, recordID, title string, headers map[string]string) (*houdaCsslPlayResult, error) {
 	cc, err := resolveHoudaCCCallback(c, roomID, recordID, headers)
 	if err != nil {
 		return nil, err
@@ -460,15 +515,113 @@ func resolveHoudaCSSL(c *util.Client, roomID, recordID, title string, headers ma
 	liveRoomID := firstNonEmpty(cc.RoomID, roomID)
 	accessID := firstNonEmpty(cc.UserID, cc.AccountID)
 	viewerToken := firstNonEmpty(cc.ViewerToken, accessID+":"+liveRoomID)
-	return shared.CssLcloudResolvePlayInfo(c, shared.CssLcloudPayload{
+	resolvedRecordID := firstNonEmpty(cc.RecordID, recordID)
+
+	result, err := resolveHoudaCSSLNative(c, accessID, resolvedRecordID, firstNonEmpty(cc.ViewerName, title), viewerToken)
+	if err == nil {
+		return result, nil
+	}
+
+	// Fallback to shared helper.
+	info, err2 := shared.CssLcloudResolvePlayInfo(c, shared.CssLcloudPayload{
 		LiveRoomID:  liveRoomID,
 		UserID:      accessID,
 		AccessID:    accessID,
-		RecordID:    firstNonEmpty(cc.RecordID, recordID),
+		RecordID:    resolvedRecordID,
 		ViewerName:  firstNonEmpty(cc.ViewerName, title),
 		ViewerToken: viewerToken,
 		Referer:     urlHome,
 	})
+	if err2 != nil {
+		return nil, fmt.Errorf("houda cssl native: %w; shared fallback: %w", err, err2)
+	}
+	items := make([]houdaCsslVideoItem, 0, len(info.VideoList))
+	for _, v := range info.VideoList {
+		items = append(items, houdaCsslVideoItem{
+			Primary: v.URL,
+			Code:    strconv.Itoa(v.Definition),
+		})
+	}
+	return &houdaCsslPlayResult{Token: info.SessionID, VideoList: items, AudioURL: info.AudioURL}, nil
+}
+
+// resolveHoudaCSSLNative runs the Houda-specific CSSL chain using the
+// /replay/user/login and /replay/video/play endpoints.
+func resolveHoudaCSSLNative(c *util.Client, accountID, recordID, viewerName, viewerToken string) (*houdaCsslPlayResult, error) {
+	// Step 1: Login — POST JSON.
+	loginPayload := map[string]any{
+		"replayId":      recordID,
+		"userId":        accountID,
+		"accountId":     accountID,
+		"userName":      viewerName,
+		"deviceType":    csslDeviceType,
+		"deviceVersion": csslDeviceVersion,
+		"tpl":           csslTpl,
+		"userToken":     viewerToken,
+	}
+	bodyBytes, _ := json.Marshal(loginPayload)
+	loginHeaders := map[string]string{
+		"Accept":       "application/json, text/plain, */*",
+		"Content-Type": "application/json;charset=UTF-8",
+		"Origin":       urlCsslOrigin,
+		"Referer":      urlCsslOrigin + "/",
+	}
+	loginResp, err := c.Post(urlCsslLogin, bytes.NewReader(bodyBytes), loginHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("houda cssl login POST: %w", err)
+	}
+	defer loginResp.Body.Close()
+	loginBody, _ := io.ReadAll(loginResp.Body)
+
+	var login struct {
+		Success bool `json:"success"`
+		Data    struct {
+			User struct {
+				Token string `json:"token"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(loginBody, &login); err != nil {
+		return nil, fmt.Errorf("houda cssl login parse: %w", err)
+	}
+	token := login.Data.User.Token
+	if token == "" {
+		return nil, fmt.Errorf("houda cssl login: empty token (success=%v, body=%s)", login.Success, truncate(string(loginBody), 200))
+	}
+
+	// Step 2: Play — GET with X-HD-Token and query params.
+	playHeaders := map[string]string{
+		"Accept":     "application/json, text/plain, */*",
+		"Origin":     urlCsslOrigin,
+		"Referer":    urlCsslOrigin + "/",
+		"X-HD-Token": token,
+	}
+	playURL := addHoudaQuery(urlCsslPlay, map[string]string{
+		"terminal":   csslTerminal,
+		"replay_id":  recordID,
+		"account_id": accountID,
+	})
+	playBody, err := c.GetString(playURL, playHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("houda cssl play GET: %w", err)
+	}
+	var play struct {
+		Data struct {
+			Video []houdaCsslVideoItem `json:"video"`
+			Audio []struct {
+				URL string `json:"url"`
+			} `json:"audio"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(playBody), &play); err != nil {
+		return nil, fmt.Errorf("houda cssl play parse: %w", err)
+	}
+
+	result := &houdaCsslPlayResult{Token: token, VideoList: play.Data.Video}
+	if len(play.Data.Audio) > 0 {
+		result.AudioURL = play.Data.Audio[0].URL
+	}
+	return result, nil
 }
 
 type houdaCCInfo struct {
@@ -480,11 +633,17 @@ type houdaCCInfo struct {
 	ViewerToken string
 }
 
+// resolveHoudaCCCallback resolves the CC playback callback URL to extract
+// csslcloud viewer parameters. Matches source _resolve_cc_callback_url:
+// uses allow_redirects=False, reads Location header, handles // and / prefixes.
 func resolveHoudaCCCallback(c *util.Client, roomID, recordID string, headers map[string]string) (houdaCCInfo, error) {
 	callbackURL := fmt.Sprintf(urlCCViewPlayback, url.PathEscape(roomID), url.PathEscape(recordID))
-	finalURL, err := fetchRedirectLocation(c, callbackURL, headers)
+	finalURL, err := fetchCCCallbackLocation(callbackURL, headers)
 	if err != nil {
 		return houdaCCInfo{}, err
+	}
+	if finalURL == "" {
+		return houdaCCInfo{}, fmt.Errorf("houda CSSL callback returned empty location: %s", callbackURL)
 	}
 	u, err := url.Parse(finalURL)
 	if err != nil {
@@ -508,16 +667,52 @@ func resolveHoudaCCCallback(c *util.Client, roomID, recordID string, headers map
 	return info, nil
 }
 
-func fetchRedirectLocation(c *util.Client, raw string, headers map[string]string) (string, error) {
-	resp, err := c.Get(raw, headers)
+// fetchCCCallbackLocation performs a GET without following redirects
+// (allow_redirects=False in source) and returns the redirect target.
+// Falls back to response.url if Location is empty and URL contains csslcloud.
+// Handles // prefix (prepend https:) and / prefix (resolve against origin).
+func fetchCCCallbackLocation(rawURL string, headers map[string]string) (string, error) {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("houda CSSL callback: %w", err)
+	}
+	req.Header.Set("User-Agent", util.RandomUA())
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("houda CSSL callback: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.Request != nil && resp.Request.URL != nil {
-		return resp.Request.URL.String(), nil
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		finalURL := rawURL
+		if resp.Request != nil && resp.Request.URL != nil {
+			finalURL = resp.Request.URL.String()
+		}
+		if strings.Contains(finalURL, "view.csslcloud.net") {
+			location = finalURL
+		}
 	}
-	return raw, nil
+
+	if strings.HasPrefix(location, "//") {
+		location = "https:" + location
+	} else if strings.HasPrefix(location, "/") {
+		if base, err := url.Parse(urlOrigin); err == nil {
+			if ref, err := url.Parse(location); err == nil {
+				location = base.ResolveReference(ref).String()
+			}
+		}
+	}
+	return location, nil
 }
 
 func rewriteHoudaM3U8(c *util.Client, m3u8URL, referer string) (string, error) {
@@ -534,16 +729,95 @@ func (s *Houda) extractCsslcloudURL(c *util.Client, rawURL string, headers map[s
 		return nil, err
 	}
 	q := u.Query()
-	roomID := firstNonEmpty(q.Get("roomId"), q.Get("roomid"), q.Get("liveRoomId"), q.Get("room_id"))
-	recordID := firstNonEmpty(q.Get("recordId"), q.Get("recordid"), q.Get("record_id"))
 	accessID := firstNonEmpty(q.Get("userId"), q.Get("userid"), q.Get("accountId"), q.Get("accessid"))
+	recordID := firstNonEmpty(q.Get("recordId"), q.Get("recordid"), q.Get("record_id"))
+	viewerName := firstNonEmpty(q.Get("viewername"), q.Get("viewerName"), "houda")
+	roomID := firstNonEmpty(q.Get("roomId"), q.Get("roomid"), q.Get("liveRoomId"), q.Get("room_id"))
 	viewerToken := firstNonEmpty(q.Get("viewertoken"), q.Get("viewerToken"), accessID+":"+roomID)
-	info, err := shared.CssLcloudResolvePlayInfo(c, shared.CssLcloudPayload{LiveRoomID: roomID, UserID: accessID, AccessID: accessID, RecordID: recordID, ViewerName: "houda", ViewerToken: viewerToken, Referer: urlHome})
+
+	// Try Houda-native CSSL chain first, then shared fallback.
+	result, err := resolveHoudaCSSLNative(c, accessID, recordID, viewerName, viewerToken)
 	if err != nil {
-		return nil, err
+		info, err2 := shared.CssLcloudResolvePlayInfo(c, shared.CssLcloudPayload{LiveRoomID: roomID, UserID: accessID, AccessID: accessID, RecordID: recordID, ViewerName: viewerName, ViewerToken: viewerToken, Referer: urlHome})
+		if err2 != nil {
+			return nil, fmt.Errorf("houda cssl native: %w; shared fallback: %w", err, err2)
+		}
+		stream := extractor.Stream{Quality: "best", URLs: []string{info.VideoURL}, Format: mediaExt(info.VideoURL), AudioURL: info.AudioURL, Headers: map[string]string{"Referer": urlHome}}
+		return &extractor.MediaInfo{Site: "houda", Title: "houda_csslcloud", Streams: map[string]extractor.Stream{"best": stream}}, nil
 	}
-	stream := extractor.Stream{Quality: "best", URLs: []string{info.VideoURL}, Format: mediaExt(info.VideoURL), AudioURL: info.AudioURL, Headers: map[string]string{"Referer": urlHome}}
-	return &extractor.MediaInfo{Site: "houda", Title: "houda_csslcloud", Streams: map[string]extractor.Stream{"best": stream}}, nil
+	sorted := sortHoudaVideosByQuality(result.VideoList)
+	streams := map[string]extractor.Stream{}
+	for i, v := range sorted {
+		videoURL := firstNonEmpty(v.Primary, v.Secondary)
+		if videoURL == "" {
+			continue
+		}
+		quality := firstNonEmpty(v.Desc, v.QualityDesc, v.Code, v.Quality, fmt.Sprintf("definition_%d", i))
+		streams[quality] = extractor.Stream{Quality: quality, URLs: []string{videoURL}, Format: mediaExt(videoURL), AudioURL: result.AudioURL, Headers: map[string]string{"Referer": urlHome}}
+	}
+	if len(streams) == 0 {
+		return nil, fmt.Errorf("houda csslcloud: no playable video in response")
+	}
+	return &extractor.MediaInfo{Site: "houda", Title: "houda_csslcloud", Streams: streams}, nil
+}
+
+// houdaQualityKey assigns a numeric sort key to a CSSL video item based on
+// its quality descriptors. Matches source _quality_key logic exactly:
+//
+//	原画/蓝光/1080/FHD/4K → 400
+//	超清                    → 320
+//	高清/720/HD             → 240
+//	标清/流畅/480/360/SD    → 160
+//	fallback: parse code/quality as int
+func houdaQualityKey(v houdaCsslVideoItem) int {
+	desc := strings.TrimSpace(firstNonEmpty(v.Desc, v.QualityDesc))
+	code := strings.TrimSpace(firstNonEmpty(v.Code, v.Quality))
+	text := desc + " " + code
+
+	for _, kw := range []string{"原画", "蓝光", "1080", "FHD", "4K"} {
+		if strings.Contains(text, kw) {
+			return 400
+		}
+	}
+	if strings.Contains(text, "超清") {
+		return 320
+	}
+	for _, kw := range []string{"高清", "720", "HD"} {
+		if strings.Contains(text, kw) {
+			return 240
+		}
+	}
+	for _, kw := range []string{"标清", "流畅", "480", "360", "SD"} {
+		if strings.Contains(text, kw) {
+			return 160
+		}
+	}
+	if n, err := strconv.Atoi(code); err == nil {
+		return n
+	}
+	return 0
+}
+
+// sortHoudaVideosByQuality returns a copy sorted by quality (highest first),
+// matching source _pick_video_url sort(key=_quality_key, reverse=True).
+func sortHoudaVideosByQuality(items []houdaCsslVideoItem) []houdaCsslVideoItem {
+	filtered := make([]houdaCsslVideoItem, 0, len(items))
+	for _, v := range items {
+		if v.Primary != "" || v.Secondary != "" {
+			filtered = append(filtered, v)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		return houdaQualityKey(filtered[i]) > houdaQualityKey(filtered[j])
+	})
+	return filtered
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func parseClassID(rawURL string) string {

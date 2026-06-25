@@ -1,12 +1,14 @@
 package ckjr
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/nichuanfang/medigo/internal/util"
 )
 
 func parseRoute(raw string) routeInfo {
@@ -82,6 +84,9 @@ func findMediaURL(v any) string {
 		u := normalizeMediaText(x)
 		if isMediaURL(u) {
 			return u
+		}
+		if dec := ckjrDecryptURL(u); dec != "" {
+			return dec
 		}
 	case map[string]any:
 		for _, k := range []string{"playUrl", "playurl", "videoUrl", "video_url", "m3u8Url", "m3u8_url", "audioUrl", "audio_url", "downloadUrl", "fileUrl", "file_url", "url", "path", "src"} {
@@ -234,10 +239,33 @@ func extractFirst(re *regexp.Regexp, s string) string {
 	if m == nil {
 		return ""
 	}
-	for _, g := range m[1:] {
-		if g != "" {
-			return g
-		}
+	return ""
+}
+
+var ckjrAESKey = []byte("ckjrTheKey!@##@!")
+var ckjrAESIV = []byte("9NONwyJtHesysWpN")
+
+func ckjrDecryptURL(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "http") || strings.HasPrefix(s, "#EXTM3U") {
+		return ""
+	}
+	s = strings.ReplaceAll(s, " ", "+")
+	for len(s)%4 != 0 {
+		s += "="
+	}
+	ct, err := base64.StdEncoding.DecodeString(s)
+	if err != nil || len(ct) == 0 || len(ct)%16 != 0 {
+		return ""
+	}
+	plain, err := util.AESDecryptCBC(ct, ckjrAESKey, ckjrAESIV)
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimSpace(string(plain))
+	if isMediaURL(u) {
+		return u
 	}
 	return ""
 }
+// end of file

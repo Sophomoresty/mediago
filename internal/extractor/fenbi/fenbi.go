@@ -256,6 +256,19 @@ func resolveLecture(c *util.Client, headers map[string]string, ids requestIDs) (
 			payloads = append(payloads, p)
 		}
 	}
+
+	// Fetch lecture-set contents: when a lecture is part of a lecture set,
+	// the sub-lectures/episodes are paginated through lecturesets/{id}/contents.
+	// Also fetch episode-set nodes from summary for additional episode sets.
+	lectureSetItems := fetchLectureSetContents(c, headers, ids.Prefix, ids.LectureID)
+	if len(lectureSetItems) > 0 {
+		payloads = append(payloads, lectureSetItems)
+	}
+	episodeSetItems := fetchSummaryEpisodeSetNodes(c, headers, ids.Prefix, ids.LectureID, payloads)
+	if len(episodeSetItems) > 0 {
+		payloads = append(payloads, episodeSetItems)
+	}
+
 	var nodes []episodeNode
 	var title string
 	var direct []*extractor.MediaInfo
@@ -289,6 +302,125 @@ func resolveLecture(c *util.Client, headers map[string]string, ids requestIDs) (
 		return direct, title, nil
 	}
 	return entries, title, nil
+}
+
+// fetchLectureSetContents paginates through lecture_set_contents_url to get
+// sub-lectures/episodes when the lecture is part of a lecture set. Mirrors
+// source _get_lecture_set_contents (Fenbi_Course line 1087).
+func fetchLectureSetContents(c *util.Client, headers map[string]string, prefix, lectureSetID string) []any {
+	if prefix == "" {
+		prefix = "gwy"
+	}
+	if lectureSetID == "" {
+		return nil
+	}
+	var out []any
+	for start := 0; start <= 10000; start += page_size {
+		api := fmt.Sprintf(lecture_set_contents_url,
+			url.PathEscape(prefix),
+			url.PathEscape(lectureSetID),
+			strconv.Itoa(start),
+			strconv.Itoa(page_size))
+		payload, err := requestJSON(c, api, headers)
+		if err != nil {
+			break
+		}
+		root := unwrapData(payload)
+		items := listMaps(root, "datas", "data", "items", "list", "episodes",
+			"episodeNodes", "nodes", "contents")
+		for _, item := range items {
+			out = append(out, item)
+		}
+		total := toInt(firstAny(root, "total", "count", "totalCount"), 0)
+		if len(items) < page_size || (total > 0 && len(out) >= total) {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// fetchSummaryEpisodeSetNodes discovers additional episode sets from the
+// lecture summary payload and fetches their episode nodes via
+// my_lecture_episode_set_nodes_url. Mirrors source _summary_episode_set_entries
+// and _get_episode_nodes with episode_set_id (Fenbi_Course lines 1107, 1135).
+func fetchSummaryEpisodeSetNodes(c *util.Client, headers map[string]string, prefix, lectureID string, existingPayloads []any) []any {
+	if prefix == "" {
+		prefix = "gwy"
+	}
+	if lectureID == "" {
+		return nil
+	}
+	// Collect episode set IDs already seen in existing payloads.
+	seenSetIDs := map[string]bool{}
+	for _, p := range existingPayloads {
+		collectEpisodeSetIDs(p, seenSetIDs)
+	}
+	// Find episode sets from summary payloads (episodeSets array).
+	var newSetIDs []string
+	for _, p := range existingPayloads {
+		for _, setID := range extractSummaryEpisodeSetIDs(p) {
+			if setID != "" && !seenSetIDs[setID] {
+				seenSetIDs[setID] = true
+				newSetIDs = append(newSetIDs, setID)
+			}
+		}
+	}
+	if len(newSetIDs) == 0 {
+		return nil
+	}
+	var out []any
+	for _, setID := range newSetIDs {
+		items := fetchEpisodeSetNodes(c, headers, prefix, lectureID, setID)
+		for _, item := range items {
+			out = append(out, item)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// fetchEpisodeSetNodes fetches episode nodes for a specific episode set within
+// a lecture, using my_lecture_episode_set_nodes_url. Mirrors source
+// _get_episode_nodes with episode_set_id (Fenbi_Course line 1107).
+func fetchEpisodeSetNodes(c *util.Client, headers map[string]string, prefix, lectureID, episodeSetID string) []map[string]any {
+	if prefix == "" {
+		prefix = "gwy"
+	}
+	if lectureID == "" || episodeSetID == "" {
+		return nil
+	}
+	api := fmt.Sprintf(my_lecture_episode_set_nodes_url,
+		url.PathEscape(prefix),
+		url.PathEscape(lectureID),
+		url.PathEscape(episodeSetID))
+	// The source uses _paged_items_from_url for this, but
+	// my_lecture_episode_set_nodes_url does not have pagination placeholders,
+	// so we add start/len as query params following the source pattern.
+	var out []map[string]any
+	for start := 0; start <= 10000; start += page_size {
+		params := map[string]string{
+			"start": strconv.Itoa(start),
+			"len":   strconv.Itoa(page_size),
+		}
+		payload, err := requestJSON(c, api, headers, params)
+		if err != nil {
+			break
+		}
+		root := unwrapData(payload)
+		items := listMaps(root, "datas", "data", "items", "list", "episodes",
+			"episodeNodes", "nodes", "contents")
+		out = append(out, items...)
+		total := toInt(firstAny(root, "total", "count", "totalCount"), 0)
+		if len(items) < page_size || (total > 0 && len(out) >= total) {
+			break
+		}
+	}
+	return out
 }
 
 func resolveEpisode(c *util.Client, headers map[string]string, prefix, episodeID, fallbackTitle string, hints ...map[string]any) (*extractor.MediaInfo, []*extractor.MediaInfo, error) {

@@ -179,7 +179,94 @@ func luffyFetchCourseList(c *util.Client, sess *luffySession) []luffyTarget {
 			}
 		}
 	}
+	if sess.Logined {
+		luffyAppendVIPCardCourses(c, sess, &out, seen)
+	}
 	return out
+}
+
+// luffyAppendVIPCardCourses fetches VIP card subscriptions and appends their
+// courses to the list.  Mirrors Luffycity_Course._append_vip_card_courses.
+//
+// Source: GET /study/vip-card/  -> list of cards
+//         GET /study/vip-card/{number}/ -> card detail with category_courses
+func luffyAppendVIPCardCourses(c *util.Client, sess *luffySession, out *[]luffyTarget, seen map[string]bool) {
+	cardsRaw := luffyGetData(c, "/study/vip-card/", nil, sess.Headers)
+	cards, ok := cardsRaw.([]any)
+	if !ok || len(cards) == 0 {
+		return
+	}
+	// Build lookup of existing courses by (course_id, title) so we can mark
+	// them purchased instead of duplicating.
+	type cidTitle struct{ cid, title string }
+	existing := make(map[cidTitle]int, len(*out))
+	for i, t := range *out {
+		existing[cidTitle{t.CID, t.Title}] = i
+	}
+	for _, rawCard := range cards {
+		card, ok := rawCard.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, exists := card["is_valid"]; exists && v == false {
+			continue
+		}
+		number := firstText(card["number"])
+		if number == "" {
+			continue
+		}
+		detailRaw := luffyGetData(c, fmt.Sprintf("/study/vip-card/%s/", url.PathEscape(number)), nil, sess.Headers)
+		detail, ok := detailRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		catCoursesRaw := detail["category_courses"]
+		if catCoursesRaw == nil {
+			continue
+		}
+		catCourses, ok := catCoursesRaw.([]any)
+		if !ok {
+			continue
+		}
+		for _, rawCat := range catCourses {
+			cat, ok := rawCat.(map[string]any)
+			if !ok {
+				continue
+			}
+			coursesRaw := cat["courses"]
+			if coursesRaw == nil {
+				continue
+			}
+			courses, ok := coursesRaw.([]any)
+			if !ok {
+				continue
+			}
+			for _, rawCourse := range courses {
+				cm, ok := rawCourse.(map[string]any)
+				if !ok {
+					continue
+				}
+				norm := luffyNormalizeCourse(cm, "actual")
+				if norm.CID == "" {
+					continue
+				}
+				norm.CourseType = "actual"
+				norm.Purchased = true
+				key := cidTitle{norm.CID, norm.Title}
+				if idx, dup := existing[key]; dup {
+					(*out)[idx].Purchased = true
+					continue
+				}
+				seenKey := norm.CourseType + ":" + norm.CID
+				if seen[seenKey] {
+					continue
+				}
+				seen[seenKey] = true
+				existing[key] = len(*out)
+				*out = append(*out, norm)
+			}
+		}
+	}
 }
 
 func luffyAppendCourses(out *[]luffyTarget, v any, defaultType string, seen map[string]bool) {

@@ -1,13 +1,22 @@
 // Package icve implements source-aligned Icve AI extraction.
+//
+// Covers:
+//   - Icve_Ai (ai.icve.com.cn) – title/design/cell/status + video transcoding
+//   - Icve_Base smartedu redirect (vocational.smartedu.cn/Details → queryList → fwdz)
 package icve
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
@@ -25,15 +34,30 @@ const (
 	LEN_               = 48
 	TIME_SLEEP         = 3.6
 	referer            = "https://www.icve.com.cn"
-	smartedu_referer   = "https://vocational.smartedu.cn"
-	url_title          = "https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId=%s"
-	url_info           = "https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId=%s&courseId=%s"
-	url_cell           = "https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=%s&courseId=%s&parentId=%s"
-	url_source_status  = "https://upload.icve.com.cn/%s/status"
-	smartedu_query_url = "https://vocational.smartedu.cn/gjzyjy/inco/ht/queryList"
+	smarteduReferer    = "https://vocational.smartedu.cn"
+	urlTitle           = "https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId=%s"
+	urlInfo            = "https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId=%s&courseId=%s"
+	urlCell            = "https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=%s&courseId=%s&parentId=%s"
+	urlSourceStatus    = "https://upload.icve.com.cn/%s/status"
+	smarteduQueryURL   = "https://vocational.smartedu.cn/gjzyjy/inco/ht/queryList"
+	smarteduDetailSQLID = "171695011763866a394676496125233763746e2fbd87ebc94"
 )
 
-var patterns = []string{`\s*((https?://ai\.icve\.com\.cn/.*?excellent.*?/(?P<cid1>[-\w]+))|(https?://ai\.icve\.com\.cn/.*?course.*?/(?P<cid2>[-\w]+)))`}
+// patterns matches ai.icve.com.cn course URLs and vocational.smartedu.cn redirect URLs.
+// Source: Mooc_Config courses_re['Icve_Ai'] + courses_redirect_re['Icve_Base'].
+var patterns = []string{
+	`\s*((https?://ai\.icve\.com\.cn/.*?excellent.*?/(?P<cid1>[-\w]+))|(https?://ai\.icve\.com\.cn/.*?course.*?/(?P<cid2>[-\w]+)))`,
+	`\s*https?://vocational\.smartedu\.cn/Details\?[^\s#]*\bid=[\w-]+[^\s#]*`,
+}
+
+// smarteduRedirectRe detects vocational.smartedu.cn/Details URLs.
+// The original Python regex uses lookaheads to match id= and lx= in any order,
+// which Go's RE2 engine does not support. Instead we match the base URL and
+// extract query params via net/url in resolveSmartEduURL.
+// Source: Mooc_Config courses_redirect_re['Icve_Base'].
+var smarteduRedirectRe = regexp.MustCompile(
+	`(?i)\s*https?://vocational\.smartedu\.cn/Details\?`,
+)
 
 func init() {
 	extractor.Register(&Icve{}, extractor.SiteInfo{Name: "Icve", URL: "icve.com.cn", NeedAuth: false})
@@ -75,6 +99,17 @@ func (i *Icve) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.M
 	if jar == nil {
 		jar, _ = cookiejar.New(nil)
 	}
+
+	// Source: Icve_Base.get_redirect_url – resolve vocational.smartedu.cn
+	// redirect URLs to real ICVE course URLs before extraction.
+	resolved, err := resolveSmartEduURL(rawURL, jar)
+	if err != nil {
+		return nil, fmt.Errorf("icve: smartedu redirect failed: %w", err)
+	}
+	if resolved != "" {
+		rawURL = resolved
+	}
+
 	x := newCtx(jar, modeFromQuality(opts.Quality))
 	x.cid = parseCID(rawURL)
 	if x.cid == "" {
@@ -88,6 +123,114 @@ func (i *Icve) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.M
 		return nil, err
 	}
 	return x.mediaFromItems(items)
+}
+
+// resolveSmartEduURL implements Icve_Base.get_redirect_url.
+// If rawURL is a vocational.smartedu.cn/Details URL, it encrypts {sqlid, id, lx}
+// with AES-CBC and POSTs to the queryList endpoint to obtain the real course URL (fwdz).
+// Returns "" if the URL is not a smartedu redirect.
+func resolveSmartEduURL(rawURL string, jar http.CookieJar) (string, error) {
+	if !smarteduRedirectRe.MatchString(rawURL) {
+		return "", nil
+	}
+	// Parse id and lx from query parameters (source uses named regex groups,
+	// but Go RE2 doesn't support lookaheads – parse via net/url instead).
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", nil
+	}
+	id := strings.TrimSpace(u.Query().Get("id"))
+	lx := strings.TrimSpace(u.Query().Get("lx"))
+	if id == "" || lx == "" {
+		return "", nil
+	}
+
+	// Build param payload – source: Icve_Base._smartedu_encrypt_param
+	paramData := map[string]string{
+		"sqlid": smarteduDetailSQLID,
+		"id":    id,
+		"lx":    lx,
+	}
+	encrypted, err := smarteduEncryptParam(paramData)
+	if err != nil {
+		return "", fmt.Errorf("encrypt param: %w", err)
+	}
+
+	// POST to queryList – source: request_json(smartedu_query_url, {"param": encrypted}, headers)
+	postBody := map[string]string{"param": encrypted}
+	bodyJSON, err := json.Marshal(postBody)
+	if err != nil {
+		return "", err
+	}
+
+	c := util.NewClient()
+	c.SetCookieJar(jar)
+	hdrs := map[string]string{
+		"Origin":       smarteduReferer,
+		"Referer":      rawURL,
+		"Content-Type": "application/json",
+	}
+	resp, err := c.Post(smarteduQueryURL, bytes.NewReader(bodyJSON), hdrs)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse response: {"content": [{"fwdz": "..."}]}
+	var result map[string]any
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		return "", nil // non-fatal: just skip redirect
+	}
+	content := mapsFromAny(result["content"])
+	if len(content) == 0 {
+		return "", nil
+	}
+	fwdz := strings.TrimSpace(str(content[0]["fwdz"]))
+	if fwdz == "" {
+		return "", nil
+	}
+
+	// Normalize URL – source: Icve_Base.get_redirect_url
+	if strings.HasPrefix(fwdz, "//") {
+		fwdz = "https:" + fwdz
+	} else if !strings.HasPrefix(fwdz, "http") {
+		fwdz = "https://" + strings.TrimLeft(fwdz, "/")
+	}
+	return fwdz, nil
+}
+
+// smarteduEncryptParam implements Icve_Base._smartedu_encrypt_param.
+// AES-CBC encryption with key=inco12345678ocni, iv=ocni12345678inco,
+// null-byte padding to block boundary, base64 encoded output.
+func smarteduEncryptParam(data map[string]string) (string, error) {
+	// Source uses json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+	plaintext, err := json.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+
+	// Pad with null bytes to AES block boundary (source: b'\x00' * pad)
+	pad := (aes.BlockSize - len(plaintext)%aes.BlockSize) % aes.BlockSize
+	if pad > 0 {
+		plaintext = append(plaintext, make([]byte, pad)...)
+	}
+
+	key := []byte("inco12345678ocni")
+	iv := []byte("ocni12345678inco")
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	mode := cipher.NewCBCEncrypter(block, iv)
+	ciphertext := make([]byte, len(plaintext))
+	mode.CryptBlocks(ciphertext, plaintext)
+
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
 func newCtx(jar http.CookieJar, mode int) *aiCtx {
@@ -108,7 +251,7 @@ func newCtx(jar http.CookieJar, mode int) *aiCtx {
 }
 
 func (x *aiCtx) loadTitle() error {
-	body, err := x.c.GetString(fmt.Sprintf(url_title, url.QueryEscape(x.cid)), x.headers)
+	body, err := x.c.GetString(fmt.Sprintf(urlTitle, url.QueryEscape(x.cid)), x.headers)
 	if err != nil {
 		return err
 	}
@@ -122,7 +265,7 @@ func (x *aiCtx) loadTitle() error {
 }
 
 func (x *aiCtx) loadItems() ([]aiItem, error) {
-	body, err := x.c.GetString(fmt.Sprintf(url_info, url.QueryEscape(x.infoID), url.QueryEscape(x.cid)), x.headers)
+	body, err := x.c.GetString(fmt.Sprintf(urlInfo, url.QueryEscape(x.infoID), url.QueryEscape(x.cid)), x.headers)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +287,7 @@ func (x *aiCtx) loadItems() ([]aiItem, error) {
 }
 
 func (x *aiCtx) loadCellItems(parentID string) ([]map[string]any, error) {
-	body, err := x.c.GetString(fmt.Sprintf(url_cell, url.QueryEscape(x.infoID), url.QueryEscape(x.cid), url.QueryEscape(parentID)), x.headers)
+	body, err := x.c.GetString(fmt.Sprintf(urlCell, url.QueryEscape(x.infoID), url.QueryEscape(x.cid), url.QueryEscape(parentID)), x.headers)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +374,7 @@ func (x *aiCtx) getVideoURL(videoInfo string) (string, string) {
 	}
 	if genURL := str(data["ossGenUrl"]); genURL != "" && strings.HasPrefix(genURL, "http") {
 		if content := str(data["content"]); content != "" {
-			statusBody, err := x.c.GetString(fmt.Sprintf(url_source_status, strings.TrimLeft(content, "/")), x.headers)
+			statusBody, err := x.c.GetString(fmt.Sprintf(urlSourceStatus, strings.TrimLeft(content, "/")), x.headers)
 			if err == nil {
 				status := parseJSONMap(statusBody)
 				if u := x.selectTranscodedURL(genURL, ext, status); u != "" {

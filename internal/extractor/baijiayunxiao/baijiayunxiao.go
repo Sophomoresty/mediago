@@ -26,9 +26,10 @@ const (
 	urlGetPlayURL  = "https://www.baijiayun.com/vod/video/getPlayUrl?vid=%s&render=jsonp&token=%s&use_encrypt=0"
 	urlHome        = "https://www.baijiayun.com"
 
-	urlCourseInfo = "https://%s/api/app/myStudy/course/%s"
-	urlToken      = "https://%s/api/app/getPcRoomCode/course_id=%s/chapter_id=%s?type=1"
-	urlPlayToken  = "https://%s/api/app/getPlayToken/chapter_id=%s/course_id=%s"
+	urlCourseInfo    = "https://%s/api/app/myStudy/course/%s"
+	urlToken         = "https://%s/api/app/getPcRoomCode/course_id=%s/chapter_id=%s?type=1"
+	urlPlayToken     = "https://%s/api/app/getPlayToken/chapter_id=%s/course_id=%s"
+	urlPreviewVideo  = "https://%s/api/app/user/CourseWare/video/preview?video_id=%s"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?(?:baijiayun|baijicloud|baijiayunxiao)\.com/`}
@@ -145,15 +146,41 @@ func resolveCourse(c *util.Client, cu courseURL, headers map[string]string) (*ex
 
 	entries := make([]*extractor.MediaInfo, 0, len(lessons))
 	for i, lesson := range lessons {
-		token, roomID, err := fetchLessonToken(c, cu, lesson.ID, headers)
+		token, roomID, fromPcRoomCode, err := fetchLessonToken(c, cu, lesson.ID, headers)
 		if err != nil || token == "" || roomID == "" {
 			continue
 		}
+
+		entryTitle := firstNonEmpty(lesson.Title, fmt.Sprintf("课时%d", i+1))
+
+		// Source: when token comes from getPlayToken (not getPcRoomCode),
+		// the preview video API is tried first as a fallback before the
+		// standard baijiayun playback APIs.
+		if !fromPcRoomCode {
+			if previewURL := fetchPreviewVideoURL(c, cu.domain, roomID, headers); previewURL != "" {
+				entry := mediaInfo("baijiayunxiao", util.SanitizeFilename(entryTitle), previewURL, pickFormat(previewURL), headers)
+				entry.Extra = map[string]any{"course_id": cu.cid, "video_id": lesson.ID, "room_id": roomID}
+				entries = append(entries, entry)
+				continue
+			}
+		}
+
 		p := playbackParams{roomID: roomID, token: token}
-		entry, err := resolvePlayback(c, p, headers, firstNonEmpty(lesson.Title, fmt.Sprintf("课时%d", i+1)))
+		entry, err := resolvePlayback(c, p, headers, entryTitle)
 		if err == nil {
 			entry.Extra = map[string]any{"course_id": cu.cid, "video_id": lesson.ID, "room_id": roomID}
 			entries = append(entries, entry)
+			continue
+		}
+
+		// Fallback: when fromPcRoomCode is true but playback resolution
+		// failed, also try the preview video API.
+		if fromPcRoomCode {
+			if previewURL := fetchPreviewVideoURL(c, cu.domain, roomID, headers); previewURL != "" {
+				entry := mediaInfo("baijiayunxiao", util.SanitizeFilename(entryTitle), previewURL, pickFormat(previewURL), headers)
+				entry.Extra = map[string]any{"course_id": cu.cid, "video_id": lesson.ID, "room_id": roomID}
+				entries = append(entries, entry)
+			}
 		}
 	}
 	if len(entries) == 0 {
@@ -163,25 +190,30 @@ func resolveCourse(c *util.Client, cu courseURL, headers map[string]string) (*ex
 	return &extractor.MediaInfo{Site: "baijiayunxiao", Title: util.SanitizeFilename(title), Entries: entries}, nil
 }
 
-func fetchLessonToken(c *util.Client, cu courseURL, lessonID string, headers map[string]string) (string, string, error) {
+// fetchLessonToken returns (token, roomID, fromPcRoomCode, error).
+// fromPcRoomCode is true when the token came from getPcRoomCode (first endpoint);
+// false when it came from getPlayToken (second endpoint). The source uses this
+// flag to decide the video resolution order: when fromPcRoomCode is false, the
+// preview video API is tried first as a fallback.
+func fetchLessonToken(c *util.Client, cu courseURL, lessonID string, headers map[string]string) (string, string, bool, error) {
 	body, err := c.GetString(fmt.Sprintf(urlToken, cu.domain, url.PathEscape(cu.cid), url.PathEscape(lessonID)), headers)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	token := pickRegex(tokenRe, body)
 	roomID := pickRegex(classIDRe, body)
 	if token != "" && roomID != "" {
-		return token, roomID, nil
+		return token, roomID, true, nil
 	}
 	body, err = c.GetString(fmt.Sprintf(urlPlayToken, cu.domain, url.PathEscape(lessonID), url.PathEscape(cu.cid)), headers)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	var resp playTokenResponse
 	_ = json.Unmarshal([]byte(body), &resp)
 	token = firstNonEmpty(resp.Token, resp.Data.Token, pickRegex(tokenRe, body))
 	roomID = firstNonEmpty(anyString(resp.VideoID), anyString(resp.RoomID), anyString(resp.ClassID), anyString(resp.Data.VideoID), anyString(resp.Data.RoomID), anyString(resp.Data.ClassID), pickRegex(classIDRe, body), lessonID)
-	return token, roomID, nil
+	return token, roomID, false, nil
 }
 
 func resolvePlayback(c *util.Client, p playbackParams, headers map[string]string, title string) (*extractor.MediaInfo, error) {

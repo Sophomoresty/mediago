@@ -1,38 +1,37 @@
 // Package dingtalk implements an extractor for n.dingtalk.com / h5.dingtalk.com
-// live replay shares and alidocs.dingtalk.com document previews.
+// live replay shares, alidocs.dingtalk.com document previews, and
+// shanji.dingtalk.com AI transcribe replays.
 //
-// API endpoints used (ported from Dingtalk_Video.pyc / Dingtalk_Live_Client.pyc):
-//   - https://n.dingtalk.com/dingding/live-room/index.html?roomId={cid}&liveUuid={lid}
-//   - https://h5.dingtalk.com/group-live-share/index.htm?encCid={encCid}&liveUuid={lid}
-//   - https://alidocs.dingtalk.com/nt/api/docs/preset            (document metadata)
-//   - https://alidocs.dingtalk.com/nt/api/docs/preset/binary     (preview binary)
+// This extractor implements the full LWP (Lightweight Protocol) WebSocket
+// client, ported from the decompiled Dingtalk_Live_Client.pyc source. LWP is
+// a JSON-over-WebSocket RPC protocol connecting to wss://webalfa-cm3.dingtalk.com/long.
 //
-// The real Python source authenticates with an LWP WebSocket client (LwpClient)
-// using a session-bound lwp_token derived from cookies and calls multiple gRPC-
-// style RPCs to resolve playback URLs. This is significant work outside the
-// scope of a Go port: the extractor parses the live-room/group-live-share URL
-// shapes, surfaces alidocs preview info for static document URLs, but returns a
-// clear blocked error for live replay since the LWP handshake isn't reimplemented.
+// Supported URL types:
+//   - Live replay:       n.dingtalk.com/dingding/live-room/index.html?roomId=X&liveUuid=Y
+//   - Public live share: h5.dingtalk.com/group-live-share/index.htm?encCid=X&liveUuid=Y
+//   - AI transcribe:     shanji.dingtalk.com/app/transcribes/<uuid>
+//   - Document preview:  alidocs.dingtalk.com/... (REST, no LWP needed)
 package dingtalk
 
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/util"
 )
 
 var patterns = []string{
-	`(?:[\w-]+\.)*dingtalk\.com/(?:dingding/live-room|group-live-share|nt/api)`,
+	`(?:[\w-]+\.)*dingtalk\.com/(?:dingding/live-room|group-live-share|nt/api|app/transcribes)`,
 	`alidocs\.dingtalk\.com/`,
+	`shanji\.dingtalk\.com/`,
 }
 
 const (
-	liveRoomURL       = "https://n.dingtalk.com/dingding/live-room/index.html"
-	groupLiveShareURL = "https://h5.dingtalk.com/group-live-share/index.htm"
-	alidocsPresetURL  = "https://alidocs.dingtalk.com/nt/api/docs/preset"
+	alidocsPresetURL = "https://alidocs.dingtalk.com/nt/api/docs/preset"
 )
 
 func init() {
@@ -52,23 +51,117 @@ func (d *DingTalk) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		return nil, fmt.Errorf("dingtalk requires login cookies (use --cookies or --cookies-from-browser)")
 	}
 
-	if dentryKey := extractDentry(rawURL); dentryKey != "" {
+	// Document preview (REST, no LWP)
+	if dentryKey := extractDentryKey(rawURL); dentryKey != "" {
 		return previewDoc(opts, dentryKey)
 	}
 
-	roomID, encCid, liveUUID := extractLiveIDs(rawURL)
-	if liveUUID == "" || (roomID == "" && encCid == "") {
-		return nil, fmt.Errorf("cannot parse dingtalk URL — expected live-room or group-live-share format: %s", rawURL)
+	// AI transcribe
+	if minutesUUID := extractTranscribeUUID(rawURL); minutesUUID != "" {
+		return extractAITranscribe(opts, minutesUUID)
 	}
 
-	return nil, fmt.Errorf("dingtalk live replay (%s/%s liveUuid=%s) requires the LWP WebSocket client (probe_public_live_share / probe_live_replay); Go port not implemented",
-		coalesce(roomID, encCid), liveRoomURL, liveUUID)
+	// Live replay or public share
+	roomID, encCid, liveUUID, pcCode := extractLiveIDs(rawURL)
+	if liveUUID == "" || (roomID == "" && encCid == "") {
+		return nil, fmt.Errorf("cannot parse dingtalk URL — expected live-room, group-live-share, or transcribe format: %s", rawURL)
+	}
+
+	cookie := cookieString(opts)
+
+	if encCid != "" {
+		return extractPublicLiveShare(cookie, encCid, liveUUID, pcCode)
+	}
+	return extractLiveReplay(cookie, roomID, liveUUID)
 }
 
-// previewDoc calls alidocs.dingtalk.com/nt/api/docs/preset to surface document
-// metadata (filename, mimeType, content URL). This is the simplest of the four
-// dingtalk endpoints and works without LWP because alidocs uses standard
-// cookie auth.
+// ---------------------------------------------------------------------------
+// Live replay extraction
+// ---------------------------------------------------------------------------
+
+func extractLiveReplay(cookie, roomID, liveUUID string) (*extractor.MediaInfo, error) {
+	result, err := resolveLiveReplay(cookie, roomID, liveUUID)
+	if err != nil {
+		return nil, fmt.Errorf("dingtalk live replay resolution failed: %w", err)
+	}
+	return buildMediaInfo(result)
+}
+
+func extractPublicLiveShare(cookie, encCid, liveUUID, pcCode string) (*extractor.MediaInfo, error) {
+	result, err := resolvePublicLiveShare(cookie, encCid, liveUUID, pcCode)
+	if err != nil {
+		return nil, fmt.Errorf("dingtalk public live share resolution failed: %w", err)
+	}
+	return buildMediaInfo(result)
+}
+
+func extractAITranscribe(opts *extractor.ExtractOpts, minutesUUID string) (*extractor.MediaInfo, error) {
+	cookie := cookieString(opts)
+	result, err := resolveAITranscribe(cookie, minutesUUID)
+	if err != nil {
+		return nil, fmt.Errorf("dingtalk AI transcribe resolution failed: %w", err)
+	}
+	return buildMediaInfo(result)
+}
+
+func buildMediaInfo(result *liveReplayResult) (*extractor.MediaInfo, error) {
+	if len(result.PlaybackURLs) == 0 {
+		return nil, fmt.Errorf("no playback URLs resolved")
+	}
+
+	title := result.Title
+	if title == "" {
+		title = "dingtalk_" + coalesce(result.RoomID, result.LiveUUID)
+	}
+
+	// Choose the best URL
+	bestURL := choosePreferredMediaURL(result.PlaybackURLs)
+	if bestURL == "" {
+		bestURL = result.PlaybackURLs[0]
+	}
+
+	// Determine format
+	format := "mp4"
+	if strings.Contains(strings.ToLower(bestURL), ".m3u8") {
+		format = "m3u8"
+	}
+
+	streams := map[string]extractor.Stream{
+		"default": {
+			Quality: "best",
+			URLs:    result.PlaybackURLs,
+			Format:  format,
+			Headers: map[string]string{
+				"Referer":    referer,
+				"User-Agent": pcUA,
+			},
+		},
+	}
+
+	// If we have resolved M3U8 content, include it as an extra
+	extra := map[string]any{}
+	if result.M3U8Content != "" {
+		extra["m3u8_content"] = result.M3U8Content
+	}
+	if result.PlaybackToken != "" {
+		extra["playback_token"] = result.PlaybackToken
+	}
+
+	info := &extractor.MediaInfo{
+		Site:    "dingtalk",
+		Title:   title,
+		Streams: streams,
+	}
+	if len(extra) > 0 {
+		info.Extra = extra
+	}
+	return info, nil
+}
+
+// ---------------------------------------------------------------------------
+// Document preview (REST endpoint, no LWP needed)
+// ---------------------------------------------------------------------------
+
 func previewDoc(opts *extractor.ExtractOpts, dentryKey string) (*extractor.MediaInfo, error) {
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
@@ -90,11 +183,11 @@ func previewDoc(opts *extractor.ExtractOpts, dentryKey string) (*extractor.Media
 	if err := json.Unmarshal([]byte(body), &preset); err != nil {
 		return nil, fmt.Errorf("parse preset: %w", err)
 	}
-	url := preset.Data.DownloadURL
-	if url == "" {
-		url = preset.Data.PreviewURL
+	docURL := preset.Data.DownloadURL
+	if docURL == "" {
+		docURL = preset.Data.PreviewURL
 	}
-	if url == "" {
+	if docURL == "" {
 		return nil, fmt.Errorf("alidocs preset returned no downloadUrl/previewUrl")
 	}
 	title := preset.Data.Name
@@ -107,7 +200,7 @@ func previewDoc(opts *extractor.ExtractOpts, dentryKey string) (*extractor.Media
 		Streams: map[string]extractor.Stream{
 			"default": {
 				Quality: "best",
-				URLs:    []string{url},
+				URLs:    []string{docURL},
 				Format:  "binary",
 				Headers: map[string]string{"Referer": "https://alidocs.dingtalk.com/"},
 			},
@@ -115,36 +208,44 @@ func previewDoc(opts *extractor.ExtractOpts, dentryKey string) (*extractor.Media
 	}, nil
 }
 
+// ---------------------------------------------------------------------------
+// URL parsing
+// ---------------------------------------------------------------------------
+
 var (
-	liveRoomRe   = regexp.MustCompile(`live-room/[^?]*\?(?:[^&]*&)*?roomId=([^&]+)(?:&[^&]*?liveUuid=([^&]+))?`)
-	groupShareRe = regexp.MustCompile(`group-live-share/[^?]*\?(?:[^&]*&)*?encCid=([^&]+)(?:&[^&]*?liveUuid=([^&]+))?`)
-	liveUUIDRe   = regexp.MustCompile(`liveUuid=([^&]+)`)
-	dentryRe     = regexp.MustCompile(`(?:dentryKey|dentryUuid)=([^&\s]+)`)
+	liveRoomRe     = regexp.MustCompile(`live-room/[^?]*\?(?:[^&]*&)*?roomId=([^&]+)`)
+	groupShareRe   = regexp.MustCompile(`group-live-share/[^?]*\?(?:[^&]*&)*?encCid=([^&]+)`)
+	liveUUIDRe     = regexp.MustCompile(`(?:liveUuid|uuid)=([^&]+)`)
+	pcCodeRe       = regexp.MustCompile(`pcCode=([^&]+)`)
+	dentryKeyRe    = regexp.MustCompile(`(?:dentryKey|dentryUuid)=([^&\s]+)`)
+	transcribeURIRe = regexp.MustCompile(`/transcribes/([\w-]+)`)
 )
 
-func extractLiveIDs(u string) (roomID, encCid, liveUUID string) {
+func extractLiveIDs(u string) (roomID, encCid, liveUUID, pcCode string) {
 	if m := liveRoomRe.FindStringSubmatch(u); len(m) > 1 {
 		roomID = m[1]
-		if len(m) > 2 {
-			liveUUID = m[2]
-		}
 	}
 	if m := groupShareRe.FindStringSubmatch(u); len(m) > 1 {
 		encCid = m[1]
-		if len(m) > 2 && liveUUID == "" {
-			liveUUID = m[2]
-		}
 	}
-	if liveUUID == "" {
-		if m := liveUUIDRe.FindStringSubmatch(u); len(m) > 1 {
-			liveUUID = m[1]
-		}
+	if m := liveUUIDRe.FindStringSubmatch(u); len(m) > 1 {
+		liveUUID = m[1]
 	}
-	return roomID, encCid, liveUUID
+	if m := pcCodeRe.FindStringSubmatch(u); len(m) > 1 {
+		pcCode = m[1]
+	}
+	return
 }
 
-func extractDentry(u string) string {
-	if m := dentryRe.FindStringSubmatch(u); len(m) > 1 {
+func extractDentryKey(u string) string {
+	if m := dentryKeyRe.FindStringSubmatch(u); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func extractTranscribeUUID(u string) string {
+	if m := transcribeURIRe.FindStringSubmatch(u); len(m) > 1 {
 		return m[1]
 	}
 	return ""
@@ -157,4 +258,21 @@ func coalesce(a ...string) string {
 		}
 	}
 	return ""
+}
+
+func cookieString(opts *extractor.ExtractOpts) string {
+	if opts == nil || opts.Cookies == nil {
+		return ""
+	}
+	// Build cookie header string from the jar for dingtalk.com
+	parsedURL, _ := url.Parse("https://www.dingtalk.com")
+	if parsedURL == nil {
+		return ""
+	}
+	cookies := opts.Cookies.Cookies(parsedURL)
+	var parts []string
+	for _, c := range cookies {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; ")
 }

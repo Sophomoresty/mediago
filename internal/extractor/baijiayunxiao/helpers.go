@@ -6,9 +6,11 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/nichuanfang/medigo/internal/util"
 )
 
 var (
@@ -185,4 +187,79 @@ func anyString(v any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(x))
 	}
+}
+
+// previewVideoResponse models the JSON returned by the CourseWare video preview
+// API: https://{domain}/api/app/user/CourseWare/video/preview?video_id={id}
+//
+// Source: Baijiayunxiao_Course._get_preview_video_url (line 1035-1074).
+// Response shape: {"data": [{"url":"...","definition":"...","size":123}, ...]}
+type previewVideoVariant struct {
+	URL        string  `json:"url"`
+	Definition string  `json:"definition"`
+	Size       float64 `json:"size"`
+}
+
+type previewVideoResponse struct {
+	Data json.RawMessage `json:"data"`
+}
+
+// fetchPreviewVideoURL calls the CourseWare video preview API and returns the
+// best (largest non-audio) variant URL. This mirrors the source's
+// _get_preview_video_url method.
+func fetchPreviewVideoURL(c *util.Client, domain, videoID string, headers map[string]string) string {
+	if domain == "" || videoID == "" {
+		return ""
+	}
+	apiURL := fmt.Sprintf(urlPreviewVideo, domain, url.QueryEscape(videoID))
+	body, err := c.GetString(apiURL, headers)
+	if err != nil {
+		return ""
+	}
+	var resp previewVideoResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return ""
+	}
+
+	// data can be an array of variants
+	var variants []previewVideoVariant
+	if err := json.Unmarshal(resp.Data, &variants); err != nil {
+		return ""
+	}
+
+	// Filter: skip audio-only entries (definition=="audio" or url contains .mp3)
+	var candidates []previewVideoVariant
+	for _, v := range variants {
+		u := normalizeMediaURL(v.URL)
+		if u == "" {
+			continue
+		}
+		if strings.EqualFold(v.Definition, "audio") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(u), ".mp3") {
+			continue
+		}
+		v.URL = u
+		candidates = append(candidates, v)
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	// Sort by size descending, pick largest
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].Size > candidates[j].Size
+	})
+	return normalizeMediaURL(candidates[0].URL)
+}
+
+// normalizeMediaURL prepends https: to protocol-relative URLs.
+// Source: _normalize_media_url
+func normalizeMediaURL(u string) string {
+	u = strings.TrimSpace(u)
+	if strings.HasPrefix(u, "//") {
+		u = "https:" + u
+	}
+	return u
 }

@@ -117,6 +117,13 @@ func (k *Kaoyanvip) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("kaoyanvip: no playable video/live entries for course=%s", cid)
 	}
+
+	// Material/file download (source _download_files: my_outline_resource + pc/material)
+	if isDelivery {
+		materialEntries := fetchKaoyanMaterials(c, headers, cid)
+		entries = append(entries, materialEntries...)
+	}
+
 	if title == "" {
 		title = "kaoyanvip_" + cid
 	}
@@ -545,4 +552,60 @@ func stringValue(v any) string {
 	default:
 		return ""
 	}
+}
+
+func fetchKaoyanMaterials(c *util.Client, headers map[string]string, cid string) []*extractor.MediaInfo {
+	var entries []*extractor.MediaInfo
+	seen := map[string]bool{}
+
+	addFile := func(name, link string) {
+		if link == "" || seen[link] {
+			return
+		}
+		seen[link] = true
+		ext := "file"
+		if idx := strings.LastIndex(link, "."); idx > 0 {
+			if q := strings.Index(link[idx:], "?"); q > 0 {
+				ext = link[idx+1 : idx+q]
+			} else {
+				ext = link[idx+1:]
+			}
+		}
+		if name == "" {
+			name = "material"
+		}
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "kaoyanvip",
+			Title: name,
+			Streams: map[string]extractor.Stream{
+				ext: {Quality: "source", URLs: []string{link}, Format: ext, Headers: map[string]string{"Referer": "https://www.kaoyanvip.cn/"}},
+			},
+		})
+	}
+
+	sourceURL := fmt.Sprintf("https://api.kaoyanvip.cn/learn/v1/delivery/my_outline_resource/?my_delivery_id=%s&resource_type=material", cid)
+	if body, err := c.GetString(sourceURL, headers); err == nil {
+		var resp struct{ Data []struct{ CourseSections []struct{ Materials []struct{ Title, DownloadLink string } } } }
+		if json.Unmarshal([]byte(body), &resp) == nil {
+			for _, d := range resp.Data {
+				for _, sec := range d.CourseSections {
+					for _, m := range sec.Materials {
+						addFile(m.Title, m.DownloadLink)
+					}
+				}
+			}
+		}
+	}
+
+	fileURL := fmt.Sprintf("https://api.kaoyanvip.cn/learn/v1/delivery/pc/material/?my_delivery_id=%s", cid)
+	if body, err := c.GetString(fileURL, headers); err == nil {
+		var resp struct{ Data struct{ MaterialList []struct{ Name, FileURL string `json:"file_url"` } } }
+		if json.Unmarshal([]byte(body), &resp) == nil {
+			for _, m := range resp.Data.MaterialList {
+				addFile(m.Name, m.FileURL)
+			}
+		}
+	}
+
+	return entries
 }

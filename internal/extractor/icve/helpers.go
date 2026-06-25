@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -370,6 +371,23 @@ func joinInts(xs []int, sep string) string {
 		parts[i] = strconv.Itoa(x)
 	}
 	return strings.Join(parts, sep)
+}
+
+func readBody(resp *http.Response) ([]byte, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("nil response")
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// regexExtract extracts the first capturing group match from text.
+func regexExtract(pattern, text string) string {
+	re := regexp.MustCompile(pattern)
+	m := re.FindStringSubmatch(text)
+	if len(m) >= 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
 }
 
 func dedupeAIItems(items []aiItem) []aiItem {

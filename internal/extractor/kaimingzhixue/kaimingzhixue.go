@@ -98,7 +98,12 @@ func (s *Kaimingzhixue) Extract(rawURL string, opts *extractor.ExtractOpts) (*ex
 	entries := make([]*extractor.MediaInfo, 0, len(items))
 	seen := map[string]bool{}
 	for i, item := range items {
-		key := item.Kind + ":" + item.ChapterID + ":" + item.VideoID + ":" + item.MeetingID
+		var key string
+		if item.Kind == "file" {
+			key = "file:" + item.FileURL
+		} else {
+			key = item.Kind + ":" + item.ChapterID + ":" + item.VideoID + ":" + item.MeetingID
+		}
 		if seen[key] {
 			continue
 		}
@@ -110,9 +115,19 @@ func (s *Kaimingzhixue) Extract(rawURL string, opts *extractor.ExtractOpts) (*ex
 		entries = append(entries, entry)
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("kaimingzhixue: no playable VOD/live entries for course=%s", cid)
+		return nil, fmt.Errorf("kaimingzhixue: no downloadable entries for course=%s", cid)
 	}
-	return &extractor.MediaInfo{Site: "kaimingzhixue", Title: title, Entries: entries, Extra: map[string]any{"course_id": cid, "course_type": courseType}}, nil
+
+	// Fetch public courseBasis price metadata (source: _get_price / _get_order_price).
+	// This populates price/has_buy/title from the public catalog, not requiring purchase.
+	extra := map[string]any{"course_id": cid, "course_type": courseType}
+	if priceInfo, ok := fetchCourseBasisPrice(c, cid, headers); ok {
+		for k, v := range priceInfo {
+			extra[k] = v
+		}
+	}
+
+	return &extractor.MediaInfo{Site: "kaimingzhixue", Title: title, Entries: entries, Extra: extra}, nil
 }
 
 func kzxHeaders(jar http.CookieJar, token string) map[string]string {
@@ -240,6 +255,62 @@ func fetchKaimingDetail(c *util.Client, cid string, headers map[string]string) (
 	return nil, fmt.Errorf("kaimingzhixue detail: data is not object")
 }
 
+// fetchCourseBasisPrice paginates the public courseBasis API to find the
+// matching course and extract price/has_buy metadata.
+// Source: _get_price (line 122), public_course_url, public_course_page_limit=20, max_pages=30.
+func fetchCourseBasisPrice(c *util.Client, cid string, headers map[string]string) (map[string]any, bool) {
+	if cid == "" {
+		return nil, false
+	}
+	const pageLimit = 20
+	const maxPages = 30
+	for page := 1; page <= maxPages; page++ {
+		data, err := kzxAPIGet[any](c, urlPublicCourse, map[string]string{
+			"page":  strconv.Itoa(page),
+			"limit": strconv.Itoa(pageLimit),
+		}, headers)
+		if err != nil {
+			return nil, false
+		}
+		dm, ok := data.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		list, _ := dm["list"].([]any)
+		if len(list) == 0 {
+			break
+		}
+		for _, item := range list {
+			rec, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			recID := firstText(rec["id"])
+			if recID == "" || recID != cid {
+				continue
+			}
+			result := map[string]any{}
+			if p := rec["price"]; p != nil {
+				result["price"] = p
+			}
+			if hb := rec["has_buy"]; hb != nil {
+				result["has_buy"] = hb
+			}
+			if t := firstText(rec["title"]); t != "" {
+				result["public_title"] = t
+			}
+			return result, true
+		}
+		// Check last_page to stop early (source line 260-266).
+		if lp := firstText(dm["last_page"]); lp != "" {
+			if lastPage, err := strconv.Atoi(lp); err == nil && page >= lastPage {
+				break
+			}
+		}
+	}
+	return nil, false
+}
+
 type kzxItem struct {
 	Kind       string
 	CourseID   string
@@ -250,6 +321,9 @@ type kzxItem struct {
 	PlayType   string
 	PeriodID   string
 	MeetingID  string
+	// file-type fields (Kind == "file")
+	FileURL string
+	FileFmt string
 }
 
 func collectKaimingItems(detail map[string]any, cid, selectedCourseType string) []kzxItem {
@@ -286,6 +360,21 @@ func walkKaimingNode(v any, cid, selectedCourseType string, prefix []int, items 
 		} else if chapterID != "" && isKaimingLiveNode(x, nodeCourseType) {
 			*items = append(*items, kzxItem{Kind: "live_playback", CourseID: cid, ChapterID: chapterID, Title: formatIndexedTitle(prefix, title), CourseType: nodeCourseType, PlayType: firstText(x["type"], x["play_type"], "1"), PeriodID: firstText(x["periods_id"], x["bjy_period_id"]), MeetingID: firstText(x["meeting_id"])})
 		}
+		// Collect file/material nodes from "datum" or "files" (source: _parse_node_sources line 533-541).
+		for _, fileKey := range []string{"datum", "files"} {
+			if fileList, ok := x[fileKey]; ok {
+				if fl, ok := fileList.([]any); ok {
+					for fi, fileEntry := range fl {
+						if fm, ok := fileEntry.(map[string]any); ok {
+							fItem := parseKaimingFileInfo(fm, append(append([]int{}, prefix...), fi+1))
+							if fItem.FileURL != "" {
+								*items = append(*items, fItem)
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, key := range []string{"child", "children", "chapter", "periods", "list", "items"} {
 			if child, ok := x[key]; ok {
 				walkKaimingNode(child, cid, selectedCourseType, prefix, items)
@@ -315,7 +404,93 @@ func isKaimingLiveNode(node map[string]any, courseType string) bool {
 	}
 }
 
+// parseKaimingFileInfo builds a file kzxItem from a datum/files entry.
+// Source: _parse_file_info (line 227) and _file_ext (line 395) in Kaimingzhixue_Course.
+// Keys: file_url / url for the download link; file_name / name for the display name.
+func parseKaimingFileInfo(fm map[string]any, indexTuple []int) kzxItem {
+	rawURL := firstText(fm["file_url"], fm["url"])
+	rawURL = normalizeURL(rawURL)
+	if rawURL == "" {
+		return kzxItem{}
+	}
+	rawName := firstText(fm["file_name"], fm["name"])
+	if rawName == "" {
+		// fallback: basename of URL path
+		if u, err := url.Parse(rawURL); err == nil {
+			parts := strings.Split(u.Path, "/")
+			if len(parts) > 0 {
+				rawName = parts[len(parts)-1]
+			}
+		}
+	}
+	if rawName == "" {
+		rawName = "资料"
+	}
+	ext := fileExtFromInfo(fm, rawURL)
+	// strip trailing extension from display name if already present (source line 432-433)
+	displayName := rawName
+	if ext != "" && strings.HasSuffix(strings.ToLower(displayName), "."+ext) {
+		displayName = displayName[:len(displayName)-len(ext)-1]
+	}
+	title := formatFileTitle(indexTuple, displayName)
+	return kzxItem{Kind: "file", Title: title, FileURL: rawURL, FileFmt: ext}
+}
+
+// fileExtFromInfo extracts file extension from file_name/name or URL path.
+// Source: _file_ext (line 395) in Kaimingzhixue_Course; fallback "dat".
+func fileExtFromInfo(fm map[string]any, fileURL string) string {
+	name := firstText(fm["file_name"], fm["name"])
+	if name != "" {
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			ext := strings.ToLower(name[idx+1:])
+			if ext != "" {
+				return ext
+			}
+		}
+	}
+	if fileURL != "" {
+		if u, err := url.Parse(fileURL); err == nil {
+			base := u.Path
+			if idx := strings.LastIndex(base, "."); idx >= 0 {
+				ext := strings.ToLower(base[idx+1:])
+				if ext != "" {
+					return ext
+				}
+			}
+		}
+	}
+	return "dat"
+}
+
+// formatFileTitle creates the indexed title for file entries using (index)--name format.
+// Source: _parse_file_info line 434 uses "({index})--{name}".
+func formatFileTitle(prefix []int, title string) string {
+	if len(prefix) == 0 {
+		return title
+	}
+	parts := make([]string, len(prefix))
+	for i, n := range prefix {
+		parts[i] = strconv.Itoa(n)
+	}
+	return fmt.Sprintf("(%s)--%s", strings.Join(parts, "."), title)
+}
+
 func buildKaimingEntry(c *util.Client, headers map[string]string, item kzxItem, index int) (*extractor.MediaInfo, error) {
+	entryTitle := firstText(item.Title, fmt.Sprintf("[%d]--未命名", index))
+
+	// File/material entries: direct download, no API resolution needed.
+	if item.Kind == "file" {
+		if item.FileURL == "" {
+			return nil, fmt.Errorf("empty file URL")
+		}
+		streamKey := item.FileFmt
+		if streamKey == "" {
+			streamKey = "file"
+		}
+		stream := extractor.Stream{Quality: streamKey, URLs: []string{item.FileURL}, Format: item.FileFmt, Headers: map[string]string{"Referer": urlReferer}}
+		return &extractor.MediaInfo{Site: "kaimingzhixue", Title: entryTitle, Streams: map[string]extractor.Stream{streamKey: stream}, Extra: map[string]any{"type": "file", "file_url": item.FileURL}}, nil
+	}
+
 	var mediaURL string
 	var err error
 	if item.Kind == "video" {
@@ -334,7 +509,7 @@ func buildKaimingEntry(c *util.Client, headers map[string]string, item kzxItem, 
 	if format == "m3u8" {
 		stream.NeedMerge = true
 	}
-	return &extractor.MediaInfo{Site: "kaimingzhixue", Title: firstText(item.Title, fmt.Sprintf("[%d]--未命名", index)), Streams: map[string]extractor.Stream{"best": stream}, Extra: map[string]any{"course_id": item.CourseID, "chapter_id": item.ChapterID, "video_id": item.VideoID, "type": item.Kind}}, nil
+	return &extractor.MediaInfo{Site: "kaimingzhixue", Title: entryTitle, Streams: map[string]extractor.Stream{"best": stream}, Extra: map[string]any{"course_id": item.CourseID, "chapter_id": item.ChapterID, "video_id": item.VideoID, "type": item.Kind}}, nil
 }
 
 func resolveKaimingVOD(c *util.Client, headers map[string]string, cid, chapterID, videoID string) (string, error) {

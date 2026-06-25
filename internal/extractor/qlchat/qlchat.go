@@ -119,19 +119,46 @@ func (q *Qlchat) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		return nil, err
 	}
 	var entries []*extractor.MediaInfo
-	for i, it := range items {
-		if it.BusinessType != "topic" {
-			continue
-		}
+	topicIdx := 0
+	fileIdx := 0
+	for _, it := range items {
 		id := jstr(it.BusinessID)
 		if id == "" {
 			continue
 		}
-		name := sanitize(fmt.Sprintf("[%d]--%s", i+1, first(it.BusinessName, id)))
-		entry, err := resolveTopic(c, h, id, name)
-		if err == nil && entry != nil {
-			entry.Extra = mergeExtra(entry.Extra, map[string]any{"is_auth_topic": it.TopicPo.IsAuthTopic, "audio_assembly_url": it.TopicPo.AudioAssemblyURL})
-			entries = append(entries, entry)
+		switch it.BusinessType {
+		case "topic":
+			topicIdx++
+			name := sanitize(fmt.Sprintf("[%d]--%s", topicIdx, first(it.BusinessName, id)))
+			entry, err := resolveTopic(c, h, id, name)
+			if err == nil && entry != nil {
+				entry.Extra = mergeExtra(entry.Extra, map[string]any{"is_auth_topic": it.TopicPo.IsAuthTopic, "audio_assembly_url": it.TopicPo.AudioAssemblyURL})
+				entries = append(entries, entry)
+			}
+			// Surface doc/ppt/article sub-resources for this topic.
+			entries = append(entries, resolveTopicDocs(c, h, state.liveID, id, name)...)
+			entries = append(entries, resolveTopicPPTs(c, h, id, name)...)
+			if article := resolveTopicArticle(c, h, id, name); article != nil {
+				entries = append(entries, article)
+			}
+		case "file":
+			fileIdx++
+			fileURL := buildFileURL(it.FilePo.URL, it.FilePo.AuthKey)
+			if fileURL == "" {
+				continue
+			}
+			fileName := sanitize(fmt.Sprintf("(%d)--%s", fileIdx, first(it.BusinessName, id)))
+			entries = append(entries, &extractor.MediaInfo{
+				Site:  "qlchat",
+				Title: fileName,
+				Streams: map[string]extractor.Stream{"best": {
+					Quality: "best",
+					URLs:    []string{fileURL},
+					Format:  pickFormat(fileURL),
+					Headers: map[string]string{"Referer": referer},
+				}},
+				Extra: map[string]any{"file_id": id, "file_type": it.FilePo.Type, "business_type": "file"},
+			})
 		}
 	}
 	if len(entries) == 0 && state.topicID != "" {
@@ -141,7 +168,7 @@ func (q *Qlchat) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		}
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("qlchat: no playable topic media found from getCourseList/media-url")
+		return nil, fmt.Errorf("qlchat: no downloadable media found from getCourseList")
 	}
 	return &extractor.MediaInfo{Site: "qlchat", Title: sanitize(first(state.title, "qlchat_"+state.cid)), Entries: entries}, nil
 }
@@ -309,6 +336,199 @@ func resolveAudio(c *util.Client, h map[string]string, topicID string) string {
 func sourceTopicID(c *util.Client, h map[string]string, id string) string {
 	body, _ := c.GetString(fmt.Sprintf(topic_url, url.QueryEscape(id)), h)
 	return match1(body, `"sourceTopicId"\s*:\s*"(\d+)"`)
+}
+
+// buildFileURL constructs "url?auth_key=authKey" for file-type items.
+func buildFileURL(rawURL, authKey string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if authKey = strings.TrimSpace(authKey); authKey != "" {
+		return rawURL + "?auth_key=" + authKey
+	}
+	return rawURL
+}
+
+// resolveTopicDocs fetches doc IDs from getTopicSpeak for the given topicID,
+// then calls doc-get and doc-auth for each doc to obtain a downloadable URL.
+func resolveTopicDocs(c *util.Client, h map[string]string, liveID, topicID, parentName string) []*extractor.MediaInfo {
+	docIDs := fetchDocIDList(c, h, liveID, topicID)
+	if len(docIDs) == 0 {
+		return nil
+	}
+	var entries []*extractor.MediaInfo
+	for i, docID := range docIDs {
+		info := fetchDocFileInfo(c, h, docID, i+1)
+		if info == nil || info.fileURL == "" {
+			continue
+		}
+		title := sanitize(fmt.Sprintf("%s_文档_%s", parentName, first(info.fileName, docID)))
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "qlchat",
+			Title: title,
+			Streams: map[string]extractor.Stream{"best": {
+				Quality: "best",
+				URLs:    []string{info.fileURL},
+				Format:  first(info.fileType, pickFormat(info.fileURL)),
+				Headers: map[string]string{"Referer": referer},
+			}},
+			Extra: map[string]any{"doc_id": docID, "file_type": info.fileType, "resource_type": "doc"},
+		})
+	}
+	return entries
+}
+
+// fetchDocIDList pages through getTopicSpeak looking for type=="doc" speaks.
+func fetchDocIDList(c *util.Client, h map[string]string, liveID, topicID string) []string {
+	var docIDs []string
+	lastTime := 0
+	for i := 0; i < 100; i++ {
+		var resp struct {
+			Data struct {
+				LiveSpeakViews []struct {
+					Type       string `json:"type"`
+					Content    string `json:"content"`
+					CreateTime int    `json:"createTime"`
+				} `json:"liveSpeakViews"`
+			} `json:"data"`
+		}
+		payload := map[string]any{
+			"time":          lastTime,
+			"beforeOrAfter": "after",
+			"liveId":        liveID,
+			"topicId":       topicID,
+		}
+		if err := postJSONInto(c, doc_list_url, payload, h, &resp); err != nil {
+			break
+		}
+		if len(resp.Data.LiveSpeakViews) == 0 {
+			break
+		}
+		for _, sp := range resp.Data.LiveSpeakViews {
+			if sp.Type == "doc" && strings.TrimSpace(sp.Content) != "" {
+				docIDs = append(docIDs, strings.TrimSpace(sp.Content))
+			}
+		}
+		last := resp.Data.LiveSpeakViews[len(resp.Data.LiveSpeakViews)-1]
+		if last.Type == "end" {
+			break
+		}
+		if last.CreateTime == lastTime {
+			break
+		}
+		lastTime = last.CreateTime
+	}
+	return docIDs
+}
+
+type docFileResult struct {
+	fileType string
+	fileName string
+	fileURL  string
+}
+
+// fetchDocFileInfo calls doc-get to retrieve the doc's convertUrl and name,
+// then doc-auth to get authKey to form the full download URL.
+func fetchDocFileInfo(c *util.Client, h map[string]string, docID string, idx int) *docFileResult {
+	// Step 1: GET doc-get to get convertUrl, type, name
+	var docResp struct {
+		Data struct {
+			Type       string `json:"type"`
+			ConvertURL string `json:"convertUrl"`
+			Name       string `json:"name"`
+		} `json:"data"`
+	}
+	if err := getJSONInto(c, fmt.Sprintf(doc_file_url, url.QueryEscape(docID)), h, &docResp); err != nil {
+		return nil
+	}
+	convertURL := strings.TrimSpace(docResp.Data.ConvertURL)
+	if convertURL == "" {
+		return nil
+	}
+	name := sanitize(fmt.Sprintf("(%d)--%s", idx, first(docResp.Data.Name, docID)))
+
+	// Step 2: GET doc-auth to get authKey
+	var authResp struct {
+		Data struct {
+			AuthKey string `json:"authKey"`
+		} `json:"data"`
+	}
+	_ = getJSONInto(c, fmt.Sprintf(doc_auth_url, url.QueryEscape(docID)), h, &authResp)
+	authKey := strings.TrimSpace(authResp.Data.AuthKey)
+
+	fileURL := convertURL
+	if authKey != "" {
+		fileURL = fmt.Sprintf("%s?auth_key=%s", convertURL, authKey)
+	}
+
+	return &docFileResult{
+		fileType: docResp.Data.Type,
+		fileName: name,
+		fileURL:  fileURL,
+	}
+}
+
+// resolveTopicPPTs fetches PPT file URLs from pptList for the given topicID.
+func resolveTopicPPTs(c *util.Client, h map[string]string, topicID, parentName string) []*extractor.MediaInfo {
+	var resp struct {
+		Data struct {
+			Files []struct {
+				URL string `json:"url"`
+			} `json:"files"`
+		} `json:"data"`
+	}
+	payload := map[string]any{"status": "", "topicId": topicID}
+	if err := postJSONInto(c, ppt_list_url, payload, h, &resp); err != nil {
+		return nil
+	}
+	if len(resp.Data.Files) == 0 {
+		return nil
+	}
+	var entries []*extractor.MediaInfo
+	for i, f := range resp.Data.Files {
+		u := strings.TrimSpace(f.URL)
+		if u == "" {
+			continue
+		}
+		title := sanitize(fmt.Sprintf("%s_PPT_%d", parentName, i+1))
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "qlchat",
+			Title: title,
+			Streams: map[string]extractor.Stream{"best": {
+				Quality: "best",
+				URLs:    []string{u},
+				Format:  pickFormat(u),
+				Headers: map[string]string{"Referer": referer},
+			}},
+			Extra: map[string]any{"topic_id": topicID, "resource_type": "ppt"},
+		})
+	}
+	return entries
+}
+
+// resolveTopicArticle fetches article text via the article API.
+// Articles are HTML/text content; we surface the API URL as a download entry.
+func resolveTopicArticle(c *util.Client, h map[string]string, topicID, parentName string) *extractor.MediaInfo {
+	var resp struct {
+		Data struct {
+			Content string `json:"content"`
+		} `json:"data"`
+	}
+	payload := map[string]any{"topicId": topicID}
+	if err := postJSONInto(c, article_url, payload, h, &resp); err != nil {
+		return nil
+	}
+	content := strings.TrimSpace(resp.Data.Content)
+	if content == "" {
+		return nil
+	}
+	title := sanitize(fmt.Sprintf("%s_(文章)", parentName))
+	return &extractor.MediaInfo{
+		Site:  "qlchat",
+		Title: title,
+		Extra: map[string]any{"topic_id": topicID, "resource_type": "article", "article_content": content},
+	}
 }
 
 func postJSONInto(c *util.Client, api string, payload any, h map[string]string, out any) error {

@@ -2,17 +2,21 @@
   "result": {
     "uuid": "uuid-1",
     "lines": [
-      {
-        "lineID": 2
-      },
-      {
-        "lineID": 1
-      }
+      {"lineID": 2},
+      {"lineID": 1}
     ]
   },
-  "data": {
-    "courseName": "Test Course",
-    "videoID": "video-0001"
-  },
-  "body": "<html><title>Test Course</title></html>"
+  "data": [
+    {
+      "name": "Chapter 1",
+      "lessons": [
+        {
+          "name": "Lesson 1",
+          "videoId": 12345,
+          "smallLessons": []
+        }
+      ]
+    }
+  ],
+  "body": "<html><title>Test Course</title><script>var termId = 100;\nvar recruitId = 999;</script></html>"
 }

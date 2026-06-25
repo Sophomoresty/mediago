@@ -37,9 +37,41 @@
         {
           "liveId": "LIVE1",
           "liveName": "Ledu Mock Lesson",
-          "detailType": "1"
+          "detailType": "1",
+          "curriculumId": "CUR1",
+          "curriculumNo": "1",
+          "registId": "REG1",
+          "resourceId": "RES1"
         }
       ]
+    }
+  },
+  "GET /classroom/basic/v2/init/auth": {
+    "code": 0,
+    "data": {
+      "initData": {
+        "course": {
+          "stdCourseId": "COURSE1",
+          "stdGrade": "G1",
+          "stdSubject": "SUB1",
+          "branchId": "1111"
+        },
+        "live": {
+          "liveId": "LIVE1",
+          "liveTypeString": "GENERAL_CLASSROOM"
+        },
+        "task": {
+          "taskTypeString": "ONLINE_PLAYBACK"
+        },
+        "teacher": {
+          "lecturerId": "LECTURER1",
+          "tutorId": "TUTOR1"
+        },
+        "classInfo": {
+          "stdClassId": "CLASS1"
+        },
+        "token": "AUTH_TOKEN_1"
+      }
     }
   },
   "GET /playback/v4/video/init": {
@@ -47,6 +79,69 @@
     "data": {
       "video_name": "Ledu Mock Lesson",
       "m3u8Url": "https://media.example.com/ledu/lesson.m3u8"
+    }
+  },
+  "POST /homepage/lessonDetailV0812/queryLessons": {
+    "code": 0,
+    "data": {
+      "lessonList": [
+        {
+          "chapterId": "CH1",
+          "title": "Lesson 1 - Introduction",
+          "liveType": "GENERAL_CLASSROOM",
+          "sceneObject": {
+            "sceneList": [
+              {
+                "chapterId": "CH1",
+                "liveType": "GENERAL_CLASSROOM",
+                "resourceId": "RES1",
+                "title": "Main Playback"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "POST /homepage/lessonDetailV0812/queryLessonDetail": {
+    "code": 0,
+    "data": {
+      "chapterId": "CH1",
+      "registId": "REG1",
+      "curriculumId": "CUR1",
+      "teacherList": [
+        {
+          "teacherId": "LECTURER1",
+          "teacherType": "1"
+        }
+      ]
+    }
+  },
+  "POST /homepage/lessonDetail/queryCourseMaterialListV0303": {
+    "code": 0,
+    "data": {
+      "materialList": [
+        {
+          "itemUrl": "https://media.example.com/ledu/handout.pdf",
+          "itemName": "Course Handout",
+          "paperId": "PAPER1",
+          "fileType": "pdf"
+        },
+        {
+          "itemUrl": "https://media.example.com/ledu/practice.docx",
+          "itemName": "Practice Sheet",
+          "fileType": "docx"
+        }
+      ]
+    }
+  },
+  "GET /classroom-ai/record/v3/resources": {
+    "code": 0,
+    "data": {
+      "encUrl": "https://media.example.com/ledu/record_enc.m3u8",
+      "m3u8Url": "https://media.example.com/ledu/record.m3u8",
+      "encKey": "abc123key",
+      "encIv": "def456iv"
     }
   }
 }

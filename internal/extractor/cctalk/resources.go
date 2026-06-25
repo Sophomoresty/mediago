@@ -26,6 +26,8 @@ func entriesFromMap(a *apiClient, item map[string]any, fallbackTitle string) []*
 	if hasVideoHint(item) || findMediaURL(item) != "" || textValue(extractCoursewareInfo(item), "coursewareId") != "" {
 		if entry, err := mediaFromMap(a, item, fallbackTitle); err == nil {
 			out = append(out, entry)
+		} else if b, ok := asBlocked(err); ok {
+			out = append(out, blockedEntry(firstNonEmpty(textValue(item, "lessonName", "videoName", "contentName", "title", "name", "subject"), fallbackTitle), b))
 		}
 	}
 	return out

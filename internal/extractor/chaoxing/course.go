@@ -74,6 +74,30 @@ func (x *chaoxingContext) resolveCourse(rawURL string) (*extractor.MediaInfo, st
 			entries = append(entries, entry)
 		}
 	}
+	// Course-data attachment/material branch (Chaoxing_Course._get_file_list).
+	// Only runs when an openc is available; the source probes for it but the
+	// probe relies on transfer-redirect parsing, so when openc is absent we
+	// fail closed for this branch rather than guess a value.
+	if x.openc != "" {
+		for _, entry := range x.resolveFileEntries(x.openc) {
+			if entry == nil || len(entry.Streams) == 0 {
+				continue
+			}
+			key := entry.Title
+			for _, st := range entry.Streams {
+				if len(st.URLs) > 0 {
+					key += "|" + st.URLs[0]
+					break
+				}
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			entries = append(entries, entry)
+		}
+	}
+
 	if len(entries) == 0 {
 		return nil, pageObjectID, fmt.Errorf("chaoxing: no resources resolved from course cards")
 	}

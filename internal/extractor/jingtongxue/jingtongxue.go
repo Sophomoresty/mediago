@@ -8,6 +8,9 @@
 //	https://www.jingtongxue.com/s/api/saas-business/front/commodity/listVideoLecture/{class_type_id}/{chapter_id}
 //	https://www.jingtongxue.com/s/api/saas-business/front/commodity/video/{module_id}/{class_type_id}/{lecture_id}
 //	https://www.jingtongxue.com/s/api/saas-business/front/commodity/video/getVideoPlayParam
+//	https://www.jingtongxue.com/s/api/saas-business/front/commodity/findClassResourceMenu
+//	https://www.jingtongxue.com/s/api/saas-business/front/commodity/findResource/{commodity_id}/{class_type_id}
+//	https://www.jingtongxue.com/s/api/saas-business/front/commodity/getDownloadLink/{resource_id}
 //	https://p.bokecc.com/servlet/getvideofile?vid={vid}&siteid={siteid}
 package jingtongxue
 
@@ -35,6 +38,9 @@ const (
 	pathLecture       = "/saas-business/front/commodity/listVideoLecture/%s/%s"
 	pathVideoInfo     = "/saas-business/front/commodity/video/%s/%s/%s"
 	pathPlayParam     = "/saas-business/front/commodity/video/getVideoPlayParam"
+	pathResourceMenu  = "/saas-business/front/commodity/findClassResourceMenu"
+	pathResource      = "/saas-business/front/commodity/findResource/%s/%s"
+	pathDownloadLink  = "/saas-business/front/commodity/getDownloadLink/%s"
 	urlBokeCCVideoAPI = "https://p.bokecc.com/servlet/getvideofile?vid=%s&siteid=%s"
 	urlBokeCCReferer  = "https://p.bokecc.com/"
 )
@@ -120,8 +126,13 @@ func (s *Jingtongxue) Extract(rawURL string, opts *extractor.ExtractOpts) (*extr
 			entries = append(entries, entry)
 		}
 	}
+
+	// Fetch courseware/resource files (resource_menu_api + resource_api).
+	resourceEntries := fetchJingtongxueResources(c, courseID, classTypeID, headers)
+	entries = append(entries, resourceEntries...)
+
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("jingtongxue: no playable video entries for commodityId=%s classTypeId=%s", courseID, classTypeID)
+		return nil, fmt.Errorf("jingtongxue: no playable video entries or resource files for commodityId=%s classTypeId=%s", courseID, classTypeID)
 	}
 	return &extractor.MediaInfo{Site: "jingtongxue", Title: title, Entries: entries, Extra: map[string]any{"commodity_id": courseID, "class_type_id": classTypeID, "detail": detail}}, nil
 }
@@ -444,6 +455,240 @@ func fetchJingtongxueSiteIDFromVideoInfo(c *util.Client, headers map[string]stri
 		return ""
 	}
 	return firstText(findStringKey(out.Data, "siteid"), findStringKey(out.Data, "ccUserId"))
+}
+
+// ---------------------------------------------------------------------------
+// Resource / courseware download flow
+// Source: Jingtongxue_Course._get_source_info, _parse_resource_file,
+//         _get_file_url, _download_one_file
+// APIs:   resource_menu_api, resource_api, download_link_api
+// ---------------------------------------------------------------------------
+
+// jtxResourceMenuItem represents one item from the resource menu API.
+type jtxResourceMenuItem struct {
+	ID   any    `json:"id"`
+	Name string `json:"name"`
+}
+
+// jtxResourceFile represents one resource/file from the resource API.
+type jtxResourceFile struct {
+	ID          any    `json:"id"`
+	ResourceID  any    `json:"resourceId"`
+	Name        string `json:"name"`
+	FileName    string `json:"fileName"`
+	Title       string `json:"title"`
+	Download    string `json:"download"`
+	DownloadURL string `json:"downloadUrl"`
+	FilePath    string `json:"filePath"`
+	Path        string `json:"path"`
+	URL         string `json:"url"`
+	Format      string `json:"format"`
+	FileType    string `json:"fileType"`
+	Suffix      string `json:"suffix"`
+	Ext         string `json:"ext"`
+}
+
+// fetchJingtongxueResourceMenu fetches the resource menu categories.
+// Source: _get_source_info calls resource_menu_api with classTypeId param.
+func fetchJingtongxueResourceMenu(c *util.Client, classTypeID string, headers map[string]string) []jtxResourceMenuItem {
+	var out jtxEnvelope[any]
+	if err := jtxGetJSON(c, pathResourceMenu, map[string]string{"classTypeId": classTypeID}, headers, &out); err != nil || !out.ok() {
+		return nil
+	}
+	// data is expected to be a list; if not, return empty
+	dataList, ok := out.Data.([]any)
+	if !ok || len(dataList) == 0 {
+		return nil
+	}
+	var items []jtxResourceMenuItem
+	for _, rec := range dataList {
+		b, _ := json.Marshal(rec)
+		var item jtxResourceMenuItem
+		if err := json.Unmarshal(b, &item); err == nil {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// fetchJingtongxueResourceList fetches resources under one menu category.
+// Source: _get_source_info calls resource_api with commodity_id, class_type_id,
+//         page, pageSize, and optional firstMenuId.
+func fetchJingtongxueResourceList(c *util.Client, commodityID, classTypeID, menuID string, headers map[string]string) []jtxResourceFile {
+	params := map[string]string{"page": "1", "pageSize": "100"}
+	if menuID != "" {
+		params["firstMenuId"] = menuID
+	}
+	path := fmt.Sprintf(pathResource, url.PathEscape(commodityID), url.PathEscape(classTypeID))
+	var out jtxEnvelope[any]
+	if err := jtxGetJSON(c, path, params, headers, &out); err != nil || !out.ok() {
+		return nil
+	}
+	records := jtxExtractRecords(out.Data)
+	var files []jtxResourceFile
+	for _, rec := range records {
+		b, _ := json.Marshal(rec)
+		var item jtxResourceFile
+		if err := json.Unmarshal(b, &item); err == nil {
+			files = append(files, item)
+		}
+	}
+	return files
+}
+
+// fetchJingtongxueDownloadLink resolves a download URL via the download_link_api.
+// Source: _get_file_url calls download_link_api.format(resource_id) when no
+//         direct URL is available on the resource record.
+func fetchJingtongxueDownloadLink(c *util.Client, resourceID string, headers map[string]string) string {
+	path := fmt.Sprintf(pathDownloadLink, url.PathEscape(resourceID))
+	var out jtxEnvelope[any]
+	if err := jtxGetJSON(c, path, nil, headers, &out); err != nil || !out.ok() {
+		return ""
+	}
+	switch d := out.Data.(type) {
+	case string:
+		return normalizeURL(strings.TrimSpace(d), urlReferer)
+	case map[string]any:
+		for _, k := range []string{"url", "downloadUrl", "path", "filePath"} {
+			if v, ok := d[k]; ok {
+				if s := stringValue(v); s != "" {
+					return normalizeURL(s, urlReferer)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// resourceFileURL resolves the final download URL for a resource file.
+// Mirrors source _get_file_url: prefer direct URL, fallback to download_link_api.
+func resourceFileURL(c *util.Client, res jtxResourceFile, headers map[string]string) string {
+	// Try direct URL from the resource record first.
+	for _, raw := range []string{res.Download, res.DownloadURL, res.FilePath, res.Path, res.URL} {
+		u := normalizeURL(strings.TrimSpace(raw), urlReferer)
+		if u != "" && strings.HasPrefix(u, "http") {
+			return u
+		}
+	}
+	// Fallback: call download_link_api with the resource id.
+	resID := firstText(res.ID, res.ResourceID)
+	if resID == "" {
+		return ""
+	}
+	return fetchJingtongxueDownloadLink(c, resID, headers)
+}
+
+// resourceFileExt determines the file extension from the resource metadata or URL.
+// Mirrors source _parse_resource_file extension logic.
+func resourceFileExt(res jtxResourceFile, fileURL string) string {
+	ext := strings.TrimLeft(strings.ToLower(strings.TrimSpace(firstText(res.Format, res.FileType, res.Suffix, res.Ext))), ".")
+	if ext != "" {
+		return ext
+	}
+	// Infer from URL: take last path segment, extract extension.
+	if fileURL == "" {
+		return "pdf" // default per source
+	}
+	seg := fileURL
+	if idx := strings.LastIndex(seg, "/"); idx >= 0 {
+		seg = seg[idx+1:]
+	}
+	if idx := strings.Index(seg, "?"); idx >= 0 {
+		seg = seg[:idx]
+	}
+	if idx := strings.LastIndex(seg, "."); idx >= 0 {
+		return strings.ToLower(seg[idx+1:])
+	}
+	return "pdf" // default per source
+}
+
+// resourceFileName returns a sanitized display name for a resource file.
+func resourceFileName(res jtxResourceFile, fileURL, ext string) string {
+	name := firstText(res.Name, res.FileName, res.Title)
+	if name == "" && fileURL != "" {
+		seg := fileURL
+		if idx := strings.LastIndex(seg, "/"); idx >= 0 {
+			seg = seg[idx+1:]
+		}
+		if idx := strings.Index(seg, "?"); idx >= 0 {
+			seg = seg[:idx]
+		}
+		name = seg
+	}
+	if name == "" {
+		name = firstText(res.ID, res.ResourceID)
+	}
+	// Strip the extension suffix from name if it matches, like source _strip_file_ext.
+	if ext != "" && strings.HasSuffix(strings.ToLower(name), "."+ext) {
+		name = name[:len(name)-len(ext)-1]
+	}
+	return name
+}
+
+// fetchJingtongxueResources fetches all courseware/resource files and returns
+// them as MediaInfo entries. This mirrors the source _get_source_info +
+// _parse_resource_file + _get_file_url flow.
+func fetchJingtongxueResources(c *util.Client, commodityID, classTypeID string, headers map[string]string) []*extractor.MediaInfo {
+	if commodityID == "" || classTypeID == "" {
+		return nil
+	}
+	menuItems := fetchJingtongxueResourceMenu(c, classTypeID, headers)
+	// Source: if no menu items returned, synthesize one with empty id.
+	if len(menuItems) == 0 {
+		menuItems = []jtxResourceMenuItem{{Name: "资料"}}
+	}
+
+	var entries []*extractor.MediaInfo
+	for menuIdx, menu := range menuItems {
+		menuID := firstText(menu.ID)
+		menuName := strings.TrimSpace(menu.Name)
+		if menuName == "" {
+			menuName = "资料"
+		}
+		resources := fetchJingtongxueResourceList(c, commodityID, classTypeID, menuID, headers)
+		for fileIdx, res := range resources {
+			fileURL := resourceFileURL(c, res, headers)
+			if fileURL == "" {
+				resID := firstText(res.ID, res.ResourceID)
+				if resID == "" {
+					continue // no id and no URL -- skip
+				}
+				// Keep entry with empty URL; downstream can retry.
+			}
+			ext := resourceFileExt(res, fileURL)
+			name := resourceFileName(res, fileURL, ext)
+			if name == "" {
+				name = fmt.Sprintf("resource_%d_%d", menuIdx+1, fileIdx+1)
+			}
+
+			displayTitle := fmt.Sprintf("(%d.%d)--%s", menuIdx+1, fileIdx+1, name)
+			format := ext
+			if format == "" {
+				format = "pdf"
+			}
+
+			stream := extractor.Stream{
+				Quality: "best",
+				URLs:    []string{fileURL},
+				Format:  format,
+				Headers: map[string]string{"Referer": urlReferer},
+			}
+
+			entry := &extractor.MediaInfo{
+				Site:    "jingtongxue",
+				Title:   displayTitle,
+				Streams: map[string]extractor.Stream{"best": stream},
+				Extra: map[string]any{
+					"type":          "file",
+					"file_id":       firstText(res.ID, res.ResourceID),
+					"file_fmt":      ext,
+					"menu_category": menuName,
+				},
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 func parseJingtongxueURL(rawURL string) (courseID, classTypeID, moduleID, lectureID string) {

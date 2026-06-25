@@ -24,6 +24,8 @@ const (
 	gongfangInfoURL        = "https://mall.bilibili.com/mall-c/ship/orderdetails/query"
 	gongfangDownloadURL    = "https://mall.bilibili.com/mall-c/ship/orderdetails/querydownloadurl"
 	gongfangSite           = "bilibili-gongfang"
+	// Bilibili_Base.referer; request_get/request_json default header.
+	gongfangReferer = "https://www.bilibili.com"
 )
 
 var gongfangPatterns = []string{
@@ -58,7 +60,7 @@ func (g *BilibiliGongfang) Extract(rawURL string, opts *extractor.ExtractOpts) (
 
 	client := util.NewClient()
 	client.SetCookieJar(opts.Cookies)
-	headers := gongfangHeaders(rawURL)
+	headers := gongfangHeaders()
 
 	title, price, _ := fetchGongfangOrderTitle(client, headers, orderID)
 	items, err := fetchGongfangItems(client, headers, orderID)
@@ -96,7 +98,7 @@ func (g *BilibiliGongfang) Extract(rawURL string, opts *extractor.ExtractOpts) (
 					Quality: "source",
 					URLs:    []string{downloadURL},
 					Format:  format,
-					Headers: gongfangDownloadHeaders(rawURL),
+					Headers: gongfangDownloadHeaders(),
 				},
 			},
 			Extra: map[string]any{
@@ -125,18 +127,22 @@ func (g *BilibiliGongfang) Extract(rawURL string, opts *extractor.ExtractOpts) (
 	}, nil
 }
 
-func gongfangHeaders(referer string) map[string]string {
+// gongfangHeaders mirrors Bilibili_Base.__header used by request_get/request_json:
+// only a cookie (carried by the client jar) and Referer = https://www.bilibili.com,
+// plus a random Chrome User-Agent set by _set_random_user_agent. The source never
+// sends an Origin header nor a gf.bilibili.com referer, so neither is added here.
+func gongfangHeaders() map[string]string {
 	return map[string]string{
-		"Accept":       "application/json, text/plain, */*",
-		"Content-Type": "application/json;charset=utf-8",
-		"Origin":       "https://gf.bilibili.com",
-		"Referer":      referer,
+		"Referer":    gongfangReferer,
+		"User-Agent": util.RandomUA(),
 	}
 }
 
-func gongfangDownloadHeaders(referer string) map[string]string {
+// gongfangDownloadHeaders mirrors Bilibili_Base.download_video/download_attach,
+// which pass cls.referer = https://www.bilibili.com and the login cookie.
+func gongfangDownloadHeaders() map[string]string {
 	return map[string]string{
-		"Referer":    referer,
+		"Referer":    gongfangReferer,
 		"User-Agent": util.RandomUA(),
 	}
 }
@@ -157,16 +163,15 @@ func fetchGongfangOrderTitle(client *util.Client, headers map[string]string, ord
 	return title, price, nil
 }
 
+// gongfangItem keys mirror _get_infos: fileContentType, fileName, shipOrderDetailsId.
 type gongfangItem struct {
 	FileContentType    string       `json:"fileContentType"`
 	FileName           string       `json:"fileName"`
 	ShipOrderDetailsID biliStringID `json:"shipOrderDetailsId"`
-	ShipOrderDetailID  biliStringID `json:"shipOrderDetailId"`
-	ID                 biliStringID `json:"id"`
 }
 
 func (g gongfangItem) id() string {
-	return biliFirstNonEmpty(g.ShipOrderDetailsID.String(), g.ShipOrderDetailID.String(), g.ID.String())
+	return g.ShipOrderDetailsID.String()
 }
 
 func fetchGongfangItems(client *util.Client, headers map[string]string, orderID string) ([]gongfangItem, error) {
@@ -202,20 +207,21 @@ func fetchGongfangDownloadURL(client *util.Client, headers map[string]string, or
 	return parseGongfangDownloadData(resp.Data), nil
 }
 
+// parseGongfangDownloadData mirrors _get_source_url: it reads data.get('url', '').
+// The source only ever reads the "url" key from the data object; no other key is
+// guessed. A bare-string data payload is also accepted defensively.
 func parseGongfangDownloadData(raw json.RawMessage) string {
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return strings.TrimSpace(s)
 	}
 	var data struct {
-		URL         string `json:"url"`
-		DownloadURL string `json:"downloadUrl"`
-		SourceURL   string `json:"sourceUrl"`
+		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return ""
 	}
-	return biliFirstNonEmpty(data.URL, data.DownloadURL, data.SourceURL)
+	return strings.TrimSpace(data.URL)
 }
 
 func postGongfangJSON(client *util.Client, endpoint string, payload map[string]any, headers map[string]string, out any) error {

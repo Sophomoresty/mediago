@@ -44,6 +44,25 @@ func (sess *mddclassSession) pcContentHeaders(referer string) map[string]string 
 	return headers
 }
 
+// globalWebHeaders builds headers for requests to the global webapi host (webapi.sksight.com).
+// Source: Mddclass_Base._global_web_headers copies header, sets User-Agent, Accept, Referer,
+// Origin=https://www.mddclass.com, App-Key headers, X-CC-COMPANY, and Cookie.
+func (sess *mddclassSession) globalWebHeaders() map[string]string {
+	headers := map[string]string{
+		"User-Agent":      mddclassUserAgent,
+		"Accept":          "application/json, text/plain, */*",
+		"Referer":         "",
+		"Origin":          "https://www.mddclass.com",
+		"Hujiang-App-Key": mddclassPCWebKey,
+		"SKsight-App-Key": mddclassPCWebKey,
+		"X-CC-COMPANY":    mddclassFirstText(sess.CompanyDomain, mddclassCompanyDomain),
+		"Cookie":          sess.Cookie,
+		"cookie":          sess.Cookie,
+	}
+	sess.applyAuthHeaders(headers)
+	return headers
+}
+
 func (sess *mddclassSession) mediaHeaders(video mddclassVideo) map[string]string {
 	headers := sess.webHeaders(mddclassFirstText(video.CompanyDomain, sess.CompanyDomain), mddclassLessonReferer(video.VideoID, video.SeriesID), "*/*")
 	headers["User-Agent"] = mddclassUserAgent

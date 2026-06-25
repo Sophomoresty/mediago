@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -64,14 +65,15 @@ func (o *Open163) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 
 	cid, courseUID := parseOpen163CourseIDs(rawURL)
 	if cid == "" && courseUID == "" {
-		return nil, fmt.Errorf("cannot parse open163 courseId from URL: %s", rawURL)
+		// Fallback: fetch purchased courses from myOrders.do (source: Open163_App.prepare -> _select_my_course)
+		return o.extractMyOrders(c)
 	}
 	course, err := loadOpen163Course(c, cid, courseUID)
 	if err != nil {
 		return nil, err
 	}
 	info := course.Data.CourseInfo
-	title := firstText(info.Title, info.Name, cid, courseUID, "open163")
+	title := sanitizeTitle(firstText(info.Title, info.Name, cid, courseUID, "open163"))
 	entries := make([]*extractor.MediaInfo, 0)
 	chapterTypes := []struct {
 		items []open163Chapter
@@ -82,7 +84,7 @@ func (o *Open163) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	}
 	for _, group := range chapterTypes {
 		for chapterIndex, chapter := range group.items {
-			chapterTitle := firstText(chapter.Title, chapter.Name, "章节")
+			chapterTitle := sanitizeTitle(firstText(chapter.Title, chapter.Name, "章节"))
 			for contentIndex, content := range chapter.ContentList {
 				item := buildOpen163Entry(chapterTitle, chapterIndex+1, contentIndex+1, content, group.kind)
 				if item != nil {
@@ -106,7 +108,7 @@ func (o *Open163) extractFree(pid string) (*extractor.MediaInfo, error) {
 	}
 	title := pid
 	if m := titleRe.FindStringSubmatch(body); len(m) > 1 {
-		title = strings.TrimSpace(strings.Split(m[1], "-")[0])
+		title = sanitizeTitle(strings.TrimSpace(strings.Split(m[1], "-")[0]))
 	}
 	parts := freeMP4Re.FindAllStringSubmatch(body, -1)
 	if len(parts) == 0 {
@@ -114,7 +116,7 @@ func (o *Open163) extractFree(pid string) (*extractor.MediaInfo, error) {
 	}
 	entries := make([]*extractor.MediaInfo, 0, len(parts))
 	for i, m := range parts {
-		u := decodeOpen163MediaURL(m[1])
+		u := normalizeFreeURL(m[1])
 		if u == "" {
 			continue
 		}
@@ -214,7 +216,7 @@ func loadOpen163Course(c *util.Client, cid, courseUID string) (*open163CourseRes
 }
 
 func buildOpen163Entry(chapterTitle string, chapterIndex, contentIndex int, content open163Content, kind string) *extractor.MediaInfo {
-	title := firstText(content.Title, content.Name, chapterTitle, kind)
+	title := sanitizeTitle(firstText(content.Title, content.Name, chapterTitle, kind))
 	media := selectOpen163MediaInfo(content.MediaInfoList, kind)
 	if media == nil {
 		return nil
@@ -379,4 +381,331 @@ func stringValue(v any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(x))
 	}
+}
+
+// sanitizeTitle normalises a title for filesystem use, matching the source
+// winre_dir_sub / winre_sub behaviour: strip invalid chars, collapse whitespace,
+// remove trailing dots/spaces, truncate to 32 runes.
+func sanitizeTitle(s string) string {
+	s = util.SanitizeFilename(s)
+	// Collapse runs of whitespace (SanitizeFilename already replaces special chars with _)
+	s = strings.Join(strings.Fields(s), " ")
+	s = strings.TrimRight(s, ". ")
+	// Source WIN_LEN = 32
+	runes := []rune(s)
+	if len(runes) > 32 {
+		s = string(runes[:32])
+	}
+	if s == "" {
+		s = "untitled"
+	}
+	return s
+}
+
+// normalizeFreeURL applies url.QueryUnescape + unicode-escape decoding to a
+// free-page MP4 URL, matching the source:
+//
+//	codecs.decode(parse.unquote(url), 'unicode_escape')
+func normalizeFreeURL(raw string) string {
+	// Step 1: URL percent-decode (parse.unquote)
+	unquoted, err := url.QueryUnescape(raw)
+	if err != nil {
+		unquoted = raw
+	}
+	// Step 2: unicode-escape decode (codecs.decode(..., 'unicode_escape'))
+	decoded := decodeUnicodeEscape(unquoted)
+	return decodeOpen163MediaURL(decoded)
+}
+
+// decodeUnicodeEscape processes Python-style \uXXXX and \UXXXXXXXX escape
+// sequences in a string.
+func decodeUnicodeEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'u':
+				if i+5 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
+						b.WriteRune(rune(v))
+						i += 6
+						continue
+					}
+				}
+			case 'U':
+				if i+9 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+10], 16, 32); err == nil {
+						b.WriteRune(rune(v))
+						i += 10
+						continue
+					}
+				}
+			case 'n':
+				b.WriteByte('\n')
+				i += 2
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i += 2
+				continue
+			case '\\':
+				b.WriteByte('\\')
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// --- myOrders.do purchased-course fallback ---
+//
+// Source: Open163_App._get_course_list (line 186-239)
+// POST to order_url with {page: N, size: 99999}, paginate up to 9 pages.
+// Filter items with status==2, dedup by (courseUid, productId).
+// For each valid order, fetch course data and build entries.
+
+type open163OrderResp struct {
+	Code int `json:"code"`
+	Data struct {
+		Items []open163OrderItem `json:"items"`
+	} `json:"data"`
+}
+
+type open163OrderItem struct {
+	Status        any    `json:"status"`
+	CourseUID     string `json:"courseUid"`
+	ProductID     string `json:"productId"`
+	ProductName   string `json:"productName"`
+	ContentType   any    `json:"contentType"`
+	DiscountPrice any    `json:"discountPrice"`
+	ProductPrice  any    `json:"productPrice"`
+}
+
+// extractMyOrders fetches the purchased-course list from myOrders.do and
+// returns each purchased course as a separate entry with its media items.
+// This matches source Open163_App.prepare -> _select_my_course -> _get_course_list.
+func (o *Open163) extractMyOrders(c *util.Client) (*extractor.MediaInfo, error) {
+	headers := map[string]string{
+		"Referer":          urlVipReferer,
+		"Origin":           urlVipReferer,
+		"X-Requested-With": "XMLHttpRequest",
+		"Accept":           "application/json, text/plain, */*",
+		"Content-Type":     "application/x-www-form-urlencoded;charset=UTF-8",
+	}
+
+	type dedupKey struct{ uid, pid string }
+	seen := map[dedupKey]bool{}
+	var courses []open163OrderItem
+
+	// Paginate up to 9 pages (source: range(1, 10))
+	for page := 1; page <= 9; page++ {
+		form := map[string]string{
+			"page": strconv.Itoa(page),
+			"size": "99999",
+		}
+		body, err := c.PostForm(urlMyOrders, form, headers)
+		if err != nil {
+			break
+		}
+		var resp open163OrderResp
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			break
+		}
+		if resp.Code != 200 {
+			break
+		}
+		items := resp.Data.Items
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			// Source: status must be 2 (paid)
+			if !isStatus2(item.Status) {
+				continue
+			}
+			uid := strings.TrimSpace(coalesceStr(item.CourseUID, item.ProductID))
+			pid := strings.TrimSpace(item.ProductID)
+			name := strings.TrimSpace(item.ProductName)
+			if uid == "" || name == "" {
+				continue
+			}
+			dk := dedupKey{uid, pid}
+			if seen[dk] {
+				continue
+			}
+			seen[dk] = true
+			courses = append(courses, item)
+		}
+		if len(items) < 99999 {
+			break
+		}
+	}
+
+	if len(courses) == 0 {
+		return nil, fmt.Errorf("open163: no purchased courses found in myOrders.do")
+	}
+
+	// For each purchased course, try to load its full data and build entries
+	var allEntries []*extractor.MediaInfo
+	for _, item := range courses {
+		uid := strings.TrimSpace(coalesceStr(item.CourseUID, item.ProductID))
+		pid := strings.TrimSpace(item.ProductID)
+		courseTitle := sanitizeTitle(item.ProductName)
+
+		// Determine cid and courseUID for loading course data
+		// Source: cid = course_id (numeric), course_uid = courseUid (may be non-numeric)
+		var cid, courseUID string
+		if isNumeric(uid) {
+			cid = uid
+			courseUID = uid
+		} else {
+			courseUID = uid
+		}
+		if pid != "" && pid != uid && isNumeric(pid) {
+			cid = pid
+		}
+
+		course, err := loadOpen163Course(c, cid, courseUID)
+		if err != nil {
+			// If we can't load course data, create a placeholder entry
+			allEntries = append(allEntries, &extractor.MediaInfo{
+				Site:  "open163",
+				Title: courseTitle,
+				Extra: map[string]any{
+					"course_uid": uid,
+					"product_id": pid,
+					"purchased":  true,
+					"price":      normalizeCentPrice(coalesceAny(item.DiscountPrice, item.ProductPrice)),
+					"error":      err.Error(),
+				},
+			})
+			continue
+		}
+
+		info := course.Data.CourseInfo
+		title := sanitizeTitle(firstText(info.Title, info.Name, courseTitle))
+		entries := make([]*extractor.MediaInfo, 0)
+		chapterTypes := []struct {
+			items []open163Chapter
+			kind  string
+		}{
+			{course.Data.MovieChapterList, "video"},
+			{course.Data.AudioChapterList, "audio"},
+		}
+		for _, group := range chapterTypes {
+			for chapterIndex, chapter := range group.items {
+				chapterTitle := sanitizeTitle(firstText(chapter.Title, chapter.Name, "章节"))
+				for contentIndex, content := range chapter.ContentList {
+					entry := buildOpen163Entry(chapterTitle, chapterIndex+1, contentIndex+1, content, group.kind)
+					if entry != nil {
+						entries = append(entries, entry)
+					}
+				}
+			}
+		}
+
+		if len(entries) > 0 {
+			allEntries = append(allEntries, &extractor.MediaInfo{
+				Site:    "open163",
+				Title:   title,
+				Entries: entries,
+				Extra: map[string]any{
+					"course_uid": uid,
+					"product_id": pid,
+					"purchased":  true,
+					"price":      normalizeCentPrice(coalesceAny(item.DiscountPrice, item.ProductPrice)),
+				},
+			})
+		}
+	}
+
+	if len(allEntries) == 0 {
+		return nil, fmt.Errorf("open163: purchased courses found but none have playable media")
+	}
+
+	return &extractor.MediaInfo{
+		Site:    "open163",
+		Title:   "open163-purchased-courses",
+		Entries: allEntries,
+	}, nil
+}
+
+// isStatus2 checks if a status value represents "paid" (status == 2).
+// Source checks `status not in (2, '2')` to skip, so we accept int 2 or string "2".
+func isStatus2(v any) bool {
+	switch x := v.(type) {
+	case float64:
+		return x == 2
+	case int:
+		return x == 2
+	case json.Number:
+		n, _ := x.Int64()
+		return n == 2
+	case string:
+		return x == "2"
+	default:
+		return fmt.Sprint(v) == "2"
+	}
+}
+
+// normalizeCentPrice converts a price in cents to yuan, matching source
+// _normalize_cent_price: if price >= 100, divide by 100.
+func normalizeCentPrice(v any) float64 {
+	var price float64
+	switch x := v.(type) {
+	case float64:
+		price = x
+	case int:
+		price = float64(x)
+	case json.Number:
+		f, _ := x.Float64()
+		price = f
+	case string:
+		f, _ := strconv.ParseFloat(x, 64)
+		price = f
+	default:
+		return 0
+	}
+	if price >= 100 {
+		return math.Round(price) / 100
+	}
+	return price
+}
+
+// coalesceStr returns the first non-empty string.
+func coalesceStr(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// coalesceAny returns the first non-nil, non-zero value.
+func coalesceAny(vals ...any) any {
+	for _, v := range vals {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// isNumeric checks if a string consists entirely of digits.
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }

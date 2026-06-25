@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ type Opts struct {
 	OutputDir   string
 	Overwrite   bool
 	Retries     int
+	NoProgress  bool
+	Proxy       string
 }
 
 type Engine struct {
@@ -42,14 +45,20 @@ func New(opts Opts) *Engine {
 		opts.Retries = 3
 	}
 	ffmpeg, _ := exec.LookPath("ffmpeg")
-	httpClient, err := util.NewHTTPClient(5*time.Minute, "")
+	httpClient, err := util.NewHTTPClient(5*time.Minute, opts.Proxy)
 	if err != nil {
 		httpClient = &http.Client{Timeout: 5 * time.Minute}
+	}
+	client := util.NewClient()
+	if opts.Proxy != "" {
+		if pc, pcErr := util.NewClientWithProxy(opts.Proxy); pcErr == nil {
+			client = pc
+		}
 	}
 	return &Engine{
 		opts:   opts,
 		ffmpeg: ffmpeg,
-		client: util.NewClient(),
+		client: client,
 		http:   httpClient,
 	}
 }
@@ -164,8 +173,12 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 		return err
 	}
 
-	bar := progressbar.DefaultBytes(size, filepath.Base(outPath))
-	_, copyErr := io.Copy(io.MultiWriter(f, bar), resp.Body)
+	var w io.Writer = f
+	if !e.opts.NoProgress {
+		bar := progressbar.DefaultBytes(size, filepath.Base(outPath))
+		w = io.MultiWriter(f, bar)
+	}
+	_, copyErr := io.Copy(w, resp.Body)
 	closeErr := f.Close()
 
 	if copyErr != nil {
@@ -218,8 +231,14 @@ func (e *Engine) downloadSegments(urls []string, outPath string, headers map[str
 	}
 	defer os.RemoveAll(tmpDir)
 
-	bar := progressbar.DefaultBytes(totalSize, filepath.Base(outPath))
+	var bar *progressbar.ProgressBar
+	if !e.opts.NoProgress {
+		bar = progressbar.DefaultBytes(totalSize, filepath.Base(outPath))
+	}
 	var downloaded atomic.Int64
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	sem := make(chan struct{}, e.opts.Concurrency)
 	var wg sync.WaitGroup
@@ -233,17 +252,26 @@ func (e *Engine) downloadSegments(urls []string, outPath string, headers map[str
 			defer wg.Done()
 			defer func() { <-sem }()
 
+			if ctx.Err() != nil {
+				return
+			}
+
 			segPath := filepath.Join(tmpDir, fmt.Sprintf("seg_%05d", idx))
-			err := e.downloadSeg(url, segPath, headers)
+			err := e.downloadSeg(ctx, url, segPath, headers)
 			if err != nil {
-				errOnce.Do(func() { firstErr = err })
+				errOnce.Do(func() {
+					firstErr = err
+					cancel()
+				})
 				return
 			}
 			info, _ := os.Stat(segPath)
 			if info != nil {
 				n := info.Size()
 				downloaded.Add(n)
-				bar.Add64(n)
+				if bar != nil {
+					bar.Add64(n)
+				}
 			}
 		}(i, u)
 	}
@@ -261,7 +289,7 @@ func (e *Engine) downloadSegments(urls []string, outPath string, headers map[str
 	return os.Rename(partPath, outPath)
 }
 
-func (e *Engine) downloadSeg(url, path string, headers map[string]string) error {
+func (e *Engine) downloadSeg(ctx context.Context, url, path string, headers map[string]string) error {
 	retries := e.opts.Retries
 	if retries <= 0 {
 		retries = 3
@@ -269,11 +297,17 @@ func (e *Engine) downloadSeg(url, path string, headers map[string]string) error 
 
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
+		if ctx.Err() != nil {
+			if lastErr != nil {
+				return lastErr
+			}
+			return ctx.Err()
+		}
 		if attempt > 0 {
 			time.Sleep(time.Duration(1<<(attempt-1)) * time.Second)
 		}
 
-		if err := e.downloadSegOnce(url, path, headers); err != nil {
+		if err := e.downloadSegOnce(ctx, url, path, headers); err != nil {
 			lastErr = err
 			os.Remove(path)
 			os.Remove(path + ".part")
@@ -285,8 +319,8 @@ func (e *Engine) downloadSeg(url, path string, headers map[string]string) error 
 	return fmt.Errorf("segment download failed after %d attempts: %w", retries+1, lastErr)
 }
 
-func (e *Engine) downloadSegOnce(url, path string, headers map[string]string) error {
-	req, err := http.NewRequest("GET", url, nil)
+func (e *Engine) downloadSegOnce(ctx context.Context, url, path string, headers map[string]string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ const (
 	lessonResourcePath = "/curriculum/getLessonResourceV2"
 	liveResourcePath   = "/curriculum/getPlayLiveSteamX"
 	platformName       = "yizhiknow"
-	platformType       = "web"
+	platformType       = "wxkt"
 )
 
 var (
@@ -85,7 +86,10 @@ func (s *Yizhiknow) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	if err != nil {
 		return nil, err
 	}
-	_, _ = ctx.requestData(statusPath, map[string]string{"curriculum_id": cid, "platform": platformName, "platform_type": platformType}, nil, "GET")
+	_, _ = ctx.requestData(statusPath, map[string]string{
+		"curriculum_id": cid,
+		"platform":      platformType,
+	}, nil, "GET")
 	title := firstNonEmpty(firstString(asMap(detail["curriculum_detail"]), "title"), firstString(detail, "title"), "yizhiknow_"+cid)
 	lessons := collectLessons(detail)
 	if len(lessons) == 0 {
@@ -98,9 +102,8 @@ func (s *Yizhiknow) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 			continue
 		}
 		seen[lesson.ID] = true
-		if entry := ctx.resolveLesson(lesson); entry != nil {
-			entries = append(entries, entry)
-		}
+		resolved := ctx.resolveLesson(lesson)
+		entries = append(entries, resolved...)
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("yizhiknow: no media URL resolved")
@@ -134,11 +137,20 @@ func tokenFromJar(jar http.CookieJar) string {
 }
 
 func (x *yzContext) baseHeaders() map[string]string {
-	return map[string]string{"Accept": "application/json, text/plain, */*", "Content-Type": "application/json;charset=UTF-8", "Origin": originURL, "Referer": refererURL, "Access-Token": x.token, "token": x.token}
+	return map[string]string{
+		"Accept":       "application/json, text/plain, */*",
+		"Content-Type": "application/json;charset=UTF-8",
+		"Origin":       originURL,
+		"Referer":      refererURL,
+	}
 }
 
 func (x *yzContext) checkCookie() error {
-	_, err := x.requestData(listPath, map[string]string{"page": "1", "page_size": "10", "platform": platformName, "platform_type": platformType}, nil, "GET")
+	_, err := x.requestData(listPath, map[string]string{
+		"page":      "1",
+		"page_size": "1",
+		"platform":  platformType,
+	}, nil, "GET")
 	if err != nil {
 		return fmt.Errorf("yizhiknow check cookie: %w", err)
 	}
@@ -168,11 +180,17 @@ func (x *yzContext) requestData(path string, params map[string]string, data any,
 	return resp, nil
 }
 
+// requestJSON sends an authenticated API request. Sign params go into HTTP
+// headers (token, sign, time-stamp, nonce-str). Original params go as query
+// string; data goes as JSON body for POST. This matches the source
+// _request_json which merges sign output into headers, not params/body.
 func (x *yzContext) requestJSON(method, path string, params map[string]string, data any) (map[string]any, error) {
 	if method == "" {
 		method = "GET"
 	}
 	apiURL := apiHost + path
+
+	// Build combined payload for sign computation (params + data merged).
 	payload := map[string]any{}
 	for k, v := range params {
 		payload[k] = v
@@ -182,60 +200,137 @@ func (x *yzContext) requestJSON(method, path string, params map[string]string, d
 			payload[k] = v
 		}
 	}
-	signed := signParams(payload, x.token)
+
+	// Compute sign; result goes into HTTP headers.
+	signHdrs := signParams(payload, x.token)
+
+	// Build request headers: base headers + sign headers.
 	h := map[string]string{}
 	for k, v := range x.headers {
 		h[k] = v
 	}
+	delete(h, "Access-Token") // source pops Access-Token before request
+	for k, v := range signHdrs {
+		h[k] = v
+	}
+
+	// Always encode params as query string (requests.request sends params
+	// as query string regardless of HTTP method).
+	u, _ := url.Parse(apiURL)
+	q := u.Query()
+	for k, v := range params {
+		q.Set(k, v)
+	}
+	u.RawQuery = q.Encode()
+
 	if strings.EqualFold(method, "GET") {
-		u, _ := url.Parse(apiURL)
-		q := u.Query()
-		for k, v := range signed {
-			q.Set(k, fmt.Sprint(v))
-		}
-		u.RawQuery = q.Encode()
 		body, err := x.c.GetString(u.String(), h)
 		if err != nil {
 			return nil, err
 		}
 		return parseJSON(body)
 	}
-	b, _ := json.Marshal(signed)
-	resp, err := x.c.Post(apiURL, strings.NewReader(string(b)), h)
+
+	// POST: send data as JSON body.
+	var bodyData any = data
+	if bodyData == nil {
+		bodyData = map[string]any{}
+	}
+	b, _ := json.Marshal(bodyData)
+	resp, err := x.c.Post(u.String(), strings.NewReader(string(b)), h)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-	return parseJSON(string(body))
+	return parseJSON(string(respBody))
 }
 
-func signParams(payload map[string]any, token string) map[string]any {
-	out := map[string]any{"nonce_str": nonce(32), "time_stamp": fmt.Sprint(time.Now().Unix()), "token": token}
+// signParams computes the authentication signature. The sign value is
+// md5(apiSecret + base64(serialized_payload)), then conditionally
+// concatenated with the token based on timestamp % 5 % 2. The result is
+// returned as HTTP header key-values (token, sign, time-stamp, nonce-str).
+func signParams(payload map[string]any, token string) map[string]string {
+	ts := fmt.Sprint(time.Now().Unix())
+	ns := nonce(32)
+
+	combined := map[string]any{
+		"token":      token,
+		"time_stamp": ts,
+		"nonce_str":  ns,
+	}
 	for k, v := range payload {
-		out[k] = v
+		combined[k] = v
 	}
-	serialized := serialize(out)
+
+	serialized := serializeSignValue(combined, false)
 	b64 := base64.StdEncoding.EncodeToString([]byte(serialized))
-	sum := md5.Sum([]byte(b64 + apiSecret))
-	out["sign"] = hex.EncodeToString(sum[:])
-	return out
+	sum := md5.Sum([]byte(apiSecret + b64))
+	md5hex := hex.EncodeToString(sum[:])
+
+	tsInt, _ := strconv.ParseInt(ts, 10, 64)
+	var sign string
+	if tsInt%5%2 != 0 {
+		sign = md5hex + token
+	} else {
+		sign = token + md5hex
+	}
+
+	return map[string]string{
+		"token":      token,
+		"sign":       sign,
+		"time-stamp": ts,
+		"nonce-str":  ns,
+	}
 }
 
-func serialize(m map[string]any) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+// serializeSignValue recursively serializes a value for signing, matching
+// the source _serialize_sign_value. Dicts become sorted key=value pairs
+// joined by &, wrapped in {} when nested. Lists become comma-joined values
+// wrapped in [] when nested. None/nil values are skipped.
+func serializeSignValue(value any, nested bool) string {
+	if value == nil {
+		return ""
 	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, m[k]))
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var parts []string
+		for _, k := range keys {
+			val := v[k]
+			if val == nil {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s=%s", k, serializeSignValue(val, true)))
+		}
+		s := strings.Join(parts, "&")
+		if nested {
+			return "{" + s + "}"
+		}
+		return s
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if item == nil {
+				continue
+			}
+			parts = append(parts, serializeSignValue(item, true))
+		}
+		s := strings.Join(parts, ",")
+		if nested {
+			return "[" + s + "]"
+		}
+		return s
+	default:
+		return fmt.Sprint(value)
 	}
-	return strings.Join(parts, "&")
 }
 
 func nonce(n int) string {
@@ -277,25 +372,115 @@ func collectLessons(detail map[string]any) []yzLesson {
 	return out
 }
 
-func (x *yzContext) resolveLesson(lesson yzLesson) *extractor.MediaInfo {
-	resourceResp, err := x.requestJSON("GET", lessonResourcePath, map[string]string{"curriculum_id": x.cid, "lesson_id": lesson.ID, "source": "web", "platform": platformName, "platform_type": platformType}, nil)
-	resource := asMap(resourceResp["data"])
-	if err != nil || len(resource) == 0 {
+// resolveLesson resolves media and material entries for a single lesson.
+// Returns a slice because each lesson can produce both a media entry and
+// zero or more material (courseware) entries.
+func (x *yzContext) resolveLesson(lesson yzLesson) []*extractor.MediaInfo {
+	var entries []*extractor.MediaInfo
+
+	// Determine numeric lesson type.
+	lessonType := 0
+	if t, err := strconv.Atoi(lesson.Type); err == nil {
+		lessonType = t
+	}
+
+	// 1. Resolve media (video/audio).
+	var resource map[string]any
+	switch {
+	case lessonType == 1 || lessonType == 2:
+		// Video-type: request lesson resource API.
+		resourceResp, err := x.requestJSON("GET", lessonResourcePath, map[string]string{
+			"curriculum_id": x.cid,
+			"lesson_id":     lesson.ID,
+			"source":        "web",
+			"platform":      platformType,
+		}, nil)
+		if err == nil {
+			resource = asMap(resourceResp["data"])
+		}
+		if len(resource) == 0 {
+			resource = lesson.Raw
+		}
+	case lessonType == 8:
+		// Live-type: get vid from stream_vod, call live resource API.
+		streamVod := asMap(lesson.Raw["stream_vod"])
+		vid := firstString(streamVod, "vid_x", "vid")
+		if vid != "" {
+			if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
+				resource = live
+			}
+		}
+		if len(resource) == 0 {
+			resource = lesson.Raw
+		}
+	default:
+		// Other types: use raw lesson data directly.
 		resource = lesson.Raw
 	}
+
 	urls := collectMediaCandidates(resource, lesson.Type)
-	if len(urls) == 0 {
-		if vid := firstString(resource, "vid_x", "vid", "video_id"); vid != "" {
+
+	// Fallback: if no URLs found and not already tried live, check for vid.
+	if len(urls) == 0 && lessonType != 8 {
+		streamVod := asMap(lesson.Raw["stream_vod"])
+		if vid := firstString(streamVod, "vid_x", "vid"); vid != "" {
 			if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
 				urls = collectMediaCandidates(live, lesson.Type)
 			}
 		}
+		// Also try vid keys at top level of resource.
+		if len(urls) == 0 {
+			if vid := firstString(resource, "vid_x", "vid", "video_id"); vid != "" {
+				if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
+					urls = collectMediaCandidates(live, lesson.Type)
+				}
+			}
+		}
 	}
-	if len(urls) == 0 {
-		return nil
+
+	// Emit first working media URL (source returns on first success).
+	if len(urls) > 0 {
+		u := urls[0]
+		format := pickFormat(u)
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "yizhiknow",
+			Title: lesson.Title,
+			Streams: map[string]extractor.Stream{
+				"default": {
+					Quality: "best",
+					URLs:    []string{u},
+					Format:  format,
+					Headers: map[string]string{"Referer": refererURL},
+				},
+			},
+			Extra: map[string]any{"lesson_id": lesson.ID},
+		})
 	}
-	u := urls[0]
-	return &extractor.MediaInfo{Site: "yizhiknow", Title: lesson.Title, Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{u}, Format: pickFormat(u), Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"lesson_id": lesson.ID}}
+
+	// 2. Resolve materials (courseware/attachments).
+	defaultMatName := lesson.Title + "_material"
+	matItems := collectMaterialItems(lesson.Material, defaultMatName)
+	for _, mat := range matItems {
+		if mat.URL == "" {
+			continue
+		}
+		format := materialFormat(mat.URL)
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "yizhiknow",
+			Title: cleanTitle(mat.Name),
+			Streams: map[string]extractor.Stream{
+				"default": {
+					Quality: "default",
+					URLs:    []string{mat.URL},
+					Format:  format,
+					Headers: map[string]string{"Referer": refererURL},
+				},
+			},
+			Extra: map[string]any{"lesson_id": lesson.ID, "type": "material"},
+		})
+	}
+
+	return entries
 }
 
 func collectMediaCandidates(v any, lessonType string) []string {

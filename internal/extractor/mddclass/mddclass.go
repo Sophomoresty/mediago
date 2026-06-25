@@ -37,6 +37,8 @@ const (
 	mddclassGlobalWebAPIHost  = "https://webapi.sksight.com"
 	mddclassAPIV11            = "/webapi/content/v1.1"
 	mddclassAPIV12            = "/webapi/content/v1.2"
+	mddclassSNSAPI            = "/webapi/sns/v1.1"
+	mddclassTradeAPI          = "/trade/v1.1"
 	mddclassPCWebKey          = "pccembed"
 	mddclassCompanyDomain     = "lexue"
 	mddclassPlaceholderMP4    = "51b106759c84acade91a81ef83cf2eea.mp4"
@@ -355,17 +357,28 @@ func mddclassLoadCourses(c *util.Client, sess *mddclassSession, target mddclassT
 		}
 		return courses, nil
 	}
-	groups := mddclassFetchGroups(c, sess)
-	courses := []mddclassCourse{}
-	seen := map[string]bool{}
-	for _, group := range groups {
-		for _, course := range mddclassFetchGroupSeries(c, sess, group) {
-			key := course.CompanyDomain + ":" + course.GroupID + ":" + course.SeriesID
-			if course.SeriesID == "" || seen[key] {
-				continue
+	coursesFromGroups := func(groups []mddclassGroup) []mddclassCourse {
+		courses := []mddclassCourse{}
+		seen := map[string]bool{}
+		for _, group := range groups {
+			for _, course := range mddclassFetchGroupSeries(c, sess, group) {
+				key := course.CompanyDomain + ":" + course.GroupID + ":" + course.SeriesID
+				if course.SeriesID == "" || seen[key] {
+					continue
+				}
+				seen[key] = true
+				courses = append(courses, course)
 			}
-			seen[key] = true
-			courses = append(courses, course)
+		}
+		return courses
+	}
+	groups := mddclassFetchGroups(c, sess, false)
+	courses := coursesFromGroups(groups)
+	if len(courses) == 0 {
+		// Retry with joined-company discovery, matching source _get_courses fallback.
+		groupsWithJoined := mddclassFetchGroups(c, sess, true)
+		if len(groupsWithJoined) != len(groups) {
+			courses = coursesFromGroups(groupsWithJoined)
 		}
 	}
 	if len(courses) == 0 {
@@ -374,14 +387,55 @@ func mddclassLoadCourses(c *util.Client, sess *mddclassSession, target mddclassT
 	return courses, nil
 }
 
-func mddclassFetchGroups(c *util.Client, sess *mddclassSession) []mddclassGroup {
-	domains := mddclassUniqueStrings([]string{sess.CompanyDomain, mddclassCompanyDomain, "meixiang"})
+func mddclassFetchGroups(c *util.Client, sess *mddclassSession, discoverJoined bool) []mddclassGroup {
+	// Build company domain candidates matching source _company_domain_candidates:
+	// 1. MDDCLASS_COMPANY_DOMAIN env override
+	// 2. session companyDomain
+	// 3. hardcoded defaults (lexue, meixiang)
+	// 4. if discoverJoined: domains from _get_joined_company_list
+	domainCandidates := []string{sess.CompanyDomain, mddclassCompanyDomain, "meixiang"}
+	if envDomain := strings.TrimSpace(os.Getenv("MDDCLASS_COMPANY_DOMAIN")); envDomain != "" {
+		domainCandidates = append([]string{envDomain}, domainCandidates...)
+	}
+	if envDomains := strings.TrimSpace(os.Getenv("MDDCLASS_COMPANY_DOMAINS")); envDomains != "" {
+		domainCandidates = append([]string{envDomains}, domainCandidates...)
+	}
+
+	// Joined-company discovery: fetch additional domains the user has joined.
+	// Source calls this when MDDCLASS_DISCOVER_JOINED_COMPANIES != "0/false/no/n",
+	// or when explicitly requested via discover_joined=True fallback.
+	joinedDomains := []string{}
+	if discoverJoined || !mddclassEnvDisabled("MDDCLASS_DISCOVER_JOINED_COMPANIES") {
+		joinedCompanies := mddclassFetchJoinedCompanies(c, sess)
+		for _, co := range joinedCompanies {
+			if domain := mddclassFirstText(co["_company_domain"], co["domain"]); domain != "" {
+				joinedDomains = append(joinedDomains, strings.ToLower(strings.TrimSpace(domain)))
+			}
+			// Remember company IDs from joined companies (source _remember_company_id).
+			if companyID := mddclassFirstText(co["_company_id"], co["companyId"], co["sellerId"]); companyID != "" {
+				if domain := mddclassFirstText(co["_company_domain"]); domain != "" {
+					if strings.EqualFold(domain, sess.CompanyDomain) {
+						sess.CompanyID = companyID
+						sess.Auth["companyId"] = companyID
+						sess.Auth["company_id"] = companyID
+					}
+				}
+			}
+		}
+		domainCandidates = append(domainCandidates, joinedDomains...)
+	}
+
+	domains := mddclassUniqueStrings(domainCandidates)
 	out := []mddclassGroup{}
 	seen := map[string]bool{}
+	queriedDomains := map[string]bool{}
 	for _, domain := range domains {
-		if domain == "" {
+		if domain == "" || queriedDomains[domain] {
 			continue
 		}
+		queriedDomains[domain] = true
+
+		// my_group_list discovery (existing).
 		mobileHost := fmt.Sprintf("https://%s-m.mddclass.com", domain)
 		for start := 0; start < 2000; start += 50 {
 			headers := sess.webHeaders(domain, mobileHost+"/mycourse", "application/json, text/plain, */*")
@@ -413,7 +467,207 @@ func mddclassFetchGroups(c *util.Client, sess *mddclassSession) []mddclassGroup 
 			}
 		}
 	}
+
+	// Trade-order discovery: for each queried domain, fetch groups from purchase orders.
+	// Source: for each domain in queried_domains, calls _get_order_group_list().
+	for _, domain := range domains {
+		if domain == "" {
+			continue
+		}
+		oldDomain := sess.CompanyDomain
+		sess.CompanyDomain = domain
+		orderGroups := mddclassFetchOrderGroups(c, sess)
+		sess.CompanyDomain = oldDomain
+		for _, orderGroup := range orderGroups {
+			gid := mddclassFirstText(orderGroup["groupId"], orderGroup["contentId"])
+			if gid == "" {
+				continue
+			}
+			key := domain + ":" + gid
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, mddclassGroup{
+				ID:            gid,
+				Title:         mddclassFirstText(orderGroup["groupName"], orderGroup["contentName"]),
+				CompanyDomain: domain,
+				CompanyID:     mddclassFirstText(orderGroup["companyId"], orderGroup["sellerId"]),
+				Raw:           orderGroup,
+			})
+		}
+	}
+
 	return out
+}
+
+// mddclassFetchOrderGroups fetches groups the user has purchased via the trade order API.
+// Source: _get_order_group_list calls _request_trade_get('/user/my_order_list', ...).
+// URL pattern: company_host + "/webapi/trade/v1.1/user/my_order_list".
+func mddclassFetchOrderGroups(c *util.Client, sess *mddclassSession) []map[string]any {
+	out := []map[string]any{}
+	seen := map[string]bool{}
+	for start := 0; start < 2000; start += 50 {
+		tradeURL := sess.companyHost("") + "/webapi/trade/v1.1/user/my_order_list"
+		headers := sess.webHeaders(sess.CompanyDomain, "", "application/json, text/plain, */*")
+		resp, err := mddclassGetJSON(c, tradeURL, map[string]string{"start": strconv.Itoa(start), "limit": "50"}, headers)
+		if err != nil || !mddclassPayloadSuccess(resp) {
+			break
+		}
+		data := mddclassPayloadData(resp)
+		items := mddclassRecords(mddclassExtractList(data))
+		if len(items) == 0 {
+			break
+		}
+		for _, order := range items {
+			// Each order has productInfos/productInfoList containing group references.
+			productInfos := mddclassOrderProductInfos(order)
+			for _, product := range productInfos {
+				bizType := mddclassFirstText(product["businessType"])
+				gid := mddclassFirstText(product["groupId"])
+				// Source: if businessType != "2" and groupId is empty, use businessId.
+				if gid == "" && bizType != "2" {
+					gid = mddclassFirstText(product["businessId"])
+				}
+				if gid == "" || seen[gid] {
+					continue
+				}
+				seen[gid] = true
+				groupName := mddclassFirstText(product["businessName"], product["productName"], product["courseName"], product["groupName"])
+				if groupName == "" {
+					groupName = gid
+				}
+				payStatus := mddclassFirstText(order["payStatus"], order["orderStatus"])
+				orderID := mddclassFirstText(order["orderId"])
+				out = append(out, map[string]any{
+					"_raw_product": product,
+					"_raw_order":   order,
+					"_pay_status":  payStatus,
+					"_order_id":    orderID,
+					"_source":      "order_list",
+					"contentName":  groupName,
+					"contentId":    gid,
+					"groupName":    groupName,
+					"groupId":      gid,
+				})
+			}
+		}
+		if !mddclassHasNextPage(mddclassMap(data), len(items), start, 50) {
+			break
+		}
+	}
+	return out
+}
+
+// mddclassOrderProductInfos extracts the product info list from a trade order.
+// Source: uses order["productInfos"] or order["productInfoList"], normalizing to []map[string]any.
+func mddclassOrderProductInfos(order map[string]any) []map[string]any {
+	raw := order["productInfos"]
+	if raw == nil {
+		raw = order["productInfoList"]
+	}
+	if raw == nil {
+		return nil
+	}
+	// If it's a single dict, wrap it.
+	if m, ok := raw.(map[string]any); ok {
+		return []map[string]any{m}
+	}
+	return mddclassRecords(raw)
+}
+
+// mddclassFetchJoinedCompanies fetches companies the user has joined via the global trade API.
+// Source: _get_joined_company_list calls _request_global_trade_get('/company/user/join_company_list', ...).
+// URL pattern: MDDCLASS_GLOBAL_WEBAPI_HOST + "/trade/v1.1/company/user/join_company_list".
+func mddclassFetchJoinedCompanies(c *util.Client, sess *mddclassSession) []map[string]any {
+	out := []map[string]any{}
+	seen := map[string]bool{}
+	globalTradeURL := mddclassGlobalWebAPIHost + mddclassTradeAPI + "/company/user/join_company_list"
+	headers := sess.globalWebHeaders()
+	resp, err := mddclassGetJSON(c, globalTradeURL, map[string]string{"start": "0", "limit": "100"}, headers)
+	if err != nil || !mddclassPayloadSuccess(resp) {
+		return out
+	}
+	data := mddclassPayloadData(resp)
+	for _, item := range mddclassRecords(mddclassExtractList(data)) {
+		domain := strings.ToLower(strings.TrimSpace(mddclassFirstText(item["domain"])))
+		if domain == "" {
+			// Fallback: extract domain from homepage URL.
+			if homepage := mddclassFirstText(item["homepage"]); homepage != "" {
+				if u, err := url.Parse(homepage); err == nil && u.Host != "" {
+					host := strings.ToLower(u.Hostname())
+					if strings.HasSuffix(host, ".mddclass.com") {
+						domain = strings.SplitN(host, ".", 2)[0]
+						if strings.HasSuffix(domain, "-m") {
+							domain = domain[:len(domain)-2]
+						}
+					}
+				}
+			}
+		}
+		companyID := mddclassFirstText(item["companyId"], item["sellerId"])
+		dedup := domain
+		if dedup == "" {
+			dedup = companyID
+		}
+		if dedup == "" || seen[dedup] {
+			continue
+		}
+		seen[dedup] = true
+		entry := map[string]any{}
+		for k, v := range item {
+			entry[k] = v
+		}
+		entry["_source"] = "join_company_list"
+		if domain != "" {
+			entry["_company_domain"] = domain
+		}
+		if companyID != "" {
+			entry["_company_id"] = companyID
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// mddclassFetchSellerIDs fetches seller IDs the user's device is associated with via the SNS API.
+// Source: _get_seller_ids calls _request_sns_get('/seller/user/device/seller_list', ...).
+// URL pattern: company_host + "/webapi/sns/v1.1/seller/user/device/seller_list".
+func mddclassFetchSellerIDs(c *util.Client, sess *mddclassSession) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for start := 0; start < 2000; start += 50 {
+		snsURL := sess.companyHost("") + mddclassSNSAPI + "/seller/user/device/seller_list"
+		headers := sess.webHeaders(sess.CompanyDomain, "", "application/json, text/plain, */*")
+		resp, err := mddclassGetJSON(c, snsURL, map[string]string{"start": strconv.Itoa(start), "limit": "50"}, headers)
+		if err != nil || !mddclassPayloadSuccess(resp) {
+			break
+		}
+		data := mddclassPayloadData(resp)
+		items := mddclassRecords(mddclassExtractList(data))
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			sellerID := mddclassFirstText(item["sellerId"], item["id"])
+			if sellerID == "" || seen[sellerID] {
+				continue
+			}
+			seen[sellerID] = true
+			out = append(out, sellerID)
+		}
+		if !mddclassHasNextPage(mddclassMap(data), len(items), start, 50) {
+			break
+		}
+	}
+	return out
+}
+
+// mddclassEnvDisabled checks if an environment variable is explicitly set to a disabled value.
+// Returns true only if the env var is set to "0", "false", "no", or "n".
+func mddclassEnvDisabled(envKey string) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(envKey)))
+	return v == "0" || v == "false" || v == "no" || v == "n"
 }
 
 func mddclassFetchGroupSeries(c *util.Client, sess *mddclassSession, group mddclassGroup) []mddclassCourse {

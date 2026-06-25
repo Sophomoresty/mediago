@@ -32,6 +32,14 @@
 | route `prefix`, `lecture_id`, `episode_id` | `parseIDs` | ✓ |
 | material candidates, url extraction, media meta fallback | `collectMaterialCandidates` / `pickURLFromResponse` / `resolveMaterialURL` / `resolveEpisode` | ✓ |
 
+## 树遍历补全
+
+| 源码方法 | Go 函数 | 一致? |
+|---|---|---|
+| `_get_lecture_set_contents` line 1087 paginated lecturesets/{id}/contents | `fetchLectureSetContents` | ✓ |
+| `_summary_episode_set_entries` line 1135 discover root episode sets from summary | `fetchSummaryEpisodeSetNodes` / `extractSummaryEpisodeSetIDs` | ✓ |
+| `_get_episode_nodes(prefix, lecture_id, episode_set_id)` line 1107 via my_lecture_episode_set_nodes_url | `fetchEpisodeSetNodes` | ✓ |
+
 ## 阻塞步骤
 
 无. 媒体元数据接口没有返回可下载 URL 时返回明确错误, 不返回空 Streams.

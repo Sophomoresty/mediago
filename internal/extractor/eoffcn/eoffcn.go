@@ -2,6 +2,9 @@
 package eoffcn
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -13,14 +16,32 @@ import (
 )
 
 const (
-	order_url       = "https://xue.eoffcn.com/api/order/complete"
-	new_order_url   = "https://xue.eoffcn.com/api/new/goods/list"
-	package_url     = "https://xue.eoffcn.com/api/package/list?system_order=%s&coding=%s"
-	catagory_url    = "https://xue.eoffcn.com/api/lesson/catagory?package_id=%s&system_order=%s"
-	course_list_url = "https://xue.eoffcn.com/api/new/course/list?system_order=%s"
-	lesson_url      = "https://xue.eoffcn.com/api/lesson/detail?lesson_id=%s&package_id=%s&module_type=%s&system_order=%s"
-	pub_key_url     = "https://api-live.offcncloud.com/api/v1/public_key"
-	encrypt_url     = "https://api-live.offcncloud.com/api/user/watch_demand"
+	// AES key/IV used to decrypt the RSA public key returned by pub_key_url.
+	// Source: Eoffcn_Course._decrypt_video_key / _request_watch_demand_data
+	// both use AESEncrypt("wwwoffcncloudcom", "wwwoffcncloudcom").aes_decrypt(pub_key).
+	pubKeyAESKey = "wwwoffcncloudcom"
+	pubKeyAESIV  = "wwwoffcncloudcom"
+
+	// Prefix prepended to the random AES key before RSA encryption.
+	// Source: rsa_encrypt(decrypted_pub_key, "offcn|||" + random_key)
+	encryptPrefix = "offcn|||"
+)
+
+const (
+	order_url        = "https://xue.eoffcn.com/api/order/complete"
+	new_order_url    = "https://xue.eoffcn.com/api/new/goods/list"
+	package_url      = "https://xue.eoffcn.com/api/package/list?system_order=%s&coding=%s"
+	catagory_url     = "https://xue.eoffcn.com/api/lesson/catagory?package_id=%s&system_order=%s"
+	course_list_url  = "https://xue.eoffcn.com/api/new/course/list?system_order=%s"
+	lesson_url       = "https://xue.eoffcn.com/api/lesson/detail?lesson_id=%s&package_id=%s&module_type=%s&system_order=%s"
+	check_member_url = "https://xue.eoffcn.com/api/check/member"
+	pub_key_url      = "https://api-live.offcncloud.com/api/v1/public_key"
+	encrypt_url      = "https://api-live.offcncloud.com/api/user/watch_demand"
+
+	// Static AES-CBC key/IV for decrypting live_url / video_url in lesson detail responses.
+	// Source: Eoffcn_Course._get_m3u8_info (line 330) / _get_file (line 697).
+	aesKey = "1234567898882222"
+	aesIV  = "8NONwyJtHesysWpM"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?(?:eoffcn|offcncloud)\.com/`}
@@ -80,6 +101,14 @@ func (e *Eoffcn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		"Accept":  "application/json, text/plain, */*",
 		"Referer": "https://www.eoffcn.com",
 		"Origin":  "https://www.eoffcn.com",
+	}
+
+	// Source: Eoffcn_Base._check_cookie validates the session cookie against
+	// https://xue.eoffcn.com/api/check/member and checks for "code":0 in the response.
+	if body, err := c.GetString(check_member_url, headers); err == nil {
+		if !strings.Contains(body, `"code":0`) && !strings.Contains(body, `"code": 0`) {
+			return nil, fmt.Errorf("eoffcn: cookie validation failed (check/member did not return code 0)")
+		}
 	}
 
 	if params.SpuID == "" {
@@ -201,38 +230,265 @@ func resolveLesson(c *util.Client, headers map[string]string, p eoffcnParams, fa
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
 		return nil, fmt.Errorf("parse eoffcn lesson detail: %w", err)
 	}
+	// findMediaURL tries both plain URLs and AES-CBC decryption of live_url/video_url
+	// using the static key from source (Eoffcn_Course._get_m3u8_info line 330).
 	mediaURL := findMediaURL(payload)
 	if mediaURL == "" {
-		// Source falls through to api-live.offcncloud.com public_key / watch_demand.
-		// Keep the HTTP+JSON hop real and parse its JSON response when room/video ids exist.
+		// Source: Eoffcn_Course._get_m3u8_info for video_type 6 first extracts
+		// k= and account= from live_url, then calls _decrypt_video_key(k, account)
+		// which uses the RSA flow. _request_watch_demand_data does the same for
+		// watch_demand content types with a live_url containing query params.
 		ids := collectWatchIDs(payload)
-		if ids.VideoID != "" || ids.RoomID != "" {
+		if ids.LiveURL != "" || ids.VideoID != "" || ids.RoomID != "" {
 			if watched := requestWatchDemand(c, headers, ids); watched != "" {
 				mediaURL = watched
 			}
 		}
 	}
 	if mediaURL == "" {
-		return nil, fmt.Errorf("eoffcn: no live_url/video_url in lesson %s", p.LessonID)
+		return nil, fmt.Errorf("eoffcn: no live_url/video_url in lesson %s (RSA watch_demand attempted but returned no media)", p.LessonID)
 	}
 	title := util.SanitizeFilename(firstNonEmpty(pickTitle(payload), fallbackTitle, "eoffcn_"+p.LessonID))
 	return mediaInfo(title, mediaURL, headers), nil
 }
 
-type watchIDs struct{ VideoID, RoomID, Account string }
+type watchIDs struct{ VideoID, RoomID, Account, K, LiveURL string }
 
+// requestWatchDemand implements the full RSA-encrypted watch_demand flow.
+//
+// Source: Eoffcn_Course._request_watch_demand_data (line 496) and
+// _decrypt_video_key (line 292). The flow is:
+//   1. GET pub_key_url -> JSON data field is the RSA public key, AES-encrypted
+//      with static key/IV "wwwoffcncloudcom".
+//   2. AES-decrypt to get the raw RSA public key body (base64 PEM body without
+//      headers).
+//   3. Generate a 16-char random alphanumeric key.
+//   4. RSA-encrypt "offcn|||" + randomKey with the public key (PKCS1v15).
+//   5. POST to encrypt_url with {account, k, encry_key: <rsa_encrypted>}.
+//   6. Server returns AES-encrypted JSON; decrypt with key=randomKey, iv=randomKey.
+//   7. Parse the decrypted JSON for media URLs.
 func requestWatchDemand(c *util.Client, headers map[string]string, ids watchIDs) string {
-	_, _ = c.GetString(pub_key_url, headers)
-	form := map[string]string{"video_id": ids.VideoID, "room_id": ids.RoomID, "account": ids.Account}
+	// Step 1: Fetch the encrypted public key.
+	pubKeyEncrypted := getPubKey(c, headers)
+	if pubKeyEncrypted == "" {
+		return ""
+	}
+
+	// Step 2: AES-decrypt the public key.
+	decryptedPubKey := aesDecryptWithStatic(pubKeyEncrypted, pubKeyAESKey, pubKeyAESIV)
+	if decryptedPubKey == "" {
+		return ""
+	}
+
+	// Step 3: Generate 16-char random key.
+	randomKey := util.RandomAlphanumeric(16)
+
+	// Step 4: RSA-encrypt "offcn|||" + randomKey.
+	// The Python source wraps the key body in "-----BEGIN RSA PUBLIC KEY-----\n"
+	// + body + "\n-----END RSA PUBLIC KEY-----\n".
+	pemKey := "-----BEGIN RSA PUBLIC KEY-----\n" + decryptedPubKey + "\n-----END RSA PUBLIC KEY-----\n"
+	encrypted, err := util.RSAEncryptPKCS1([]byte(encryptPrefix+randomKey), pemKey)
+	if err != nil {
+		return ""
+	}
+
+	// Step 5: Build POST data and send.
+	// For _request_watch_demand_data: {account: <account>, k: <k>, encry_key: <encrypted>}
+	// For _decrypt_video_key: same structure with str_k and account.
+	account := ids.Account
+	k := ids.K
+	if k == "" && ids.LiveURL != "" {
+		// Parse k and account from live_url query params.
+		k, account = parseLiveURLParams(ids.LiveURL)
+	}
+
+	form := map[string]string{
+		"account":   account,
+		"k":         k,
+		"encry_key": encrypted,
+	}
+
 	body, err := c.PostForm(encrypt_url, form, headers)
 	if err != nil {
 		return ""
 	}
-	var payload any
+
+	// Step 6: Parse and AES-decrypt the response.
+	var payload map[string]any
 	if json.Unmarshal([]byte(body), &payload) != nil {
 		return ""
 	}
-	return findMediaURL(payload)
+	respData, _ := payload["data"].(string)
+	if respData == "" {
+		return ""
+	}
+
+	// AES-decrypt with randomKey as both key and IV.
+	decrypted := aesDecryptWithStatic(respData, randomKey, randomKey)
+	if decrypted == "" {
+		return ""
+	}
+
+	// Step 7: Parse the decrypted data for media URLs.
+	return extractWatchDemandURL(decrypted)
+}
+
+// getPubKey fetches the RSA public key from the server.
+// Source: Eoffcn_Course._get_pub_key (line 279).
+func getPubKey(c *util.Client, headers map[string]string) string {
+	body, err := c.GetString(pub_key_url, headers)
+	if err != nil {
+		return ""
+	}
+	var payload map[string]any
+	if json.Unmarshal([]byte(body), &payload) != nil {
+		return ""
+	}
+	data, _ := payload["data"].(string)
+	return data
+}
+
+// aesDecryptWithStatic decrypts base64-encoded AES-CBC data using the given
+// key and IV strings. Returns the decrypted plaintext as a string.
+// Mirrors Python: AESEncrypt(key, iv).aes_decrypt(data).
+func aesDecryptWithStatic(encrypted, key, iv string) string {
+	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		// Try URL-safe base64.
+		ciphertext, err = base64.URLEncoding.DecodeString(encrypted)
+		if err != nil {
+			return ""
+		}
+	}
+	block, err := aes.NewCipher([]byte(key))
+	if err != nil {
+		return ""
+	}
+	if len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
+		return ""
+	}
+	mode := cipher.NewCBCDecrypter(block, []byte(iv))
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+	plaintext = pkcs7Unpad(plaintext)
+	if len(plaintext) == 0 {
+		return ""
+	}
+	return string(plaintext)
+}
+
+// parseLiveURLParams extracts the "k" and "account" parameters from a live_url.
+// Source: Eoffcn_Course._parse_live_url_params (line 496).
+func parseLiveURLParams(liveURL string) (k, account string) {
+	if u, err := url.Parse(liveURL); err == nil {
+		q := u.Query()
+		k = q.Get("k")
+		account = q.Get("account")
+	}
+	if k == "" {
+		if m := regexp.MustCompile(`[?&]k=([^&]+)`).FindStringSubmatch(liveURL); len(m) > 1 {
+			k = m[1]
+		}
+	}
+	if account == "" {
+		if m := regexp.MustCompile(`[?&]account=([^&]+)`).FindStringSubmatch(liveURL); len(m) > 1 {
+			account = m[1]
+		}
+	}
+	return
+}
+
+// extractWatchDemandURL parses the decrypted watch_demand response for media URLs.
+// Source: Eoffcn_Course._normalize_watch_demand_data (line 528) extracts URLs
+// from many possible field names.
+func extractWatchDemandURL(decrypted string) string {
+	// Try parsing as JSON.
+	var data any
+	if json.Unmarshal([]byte(decrypted), &data) == nil {
+		if u := findMediaURL(data); u != "" {
+			return u
+		}
+		// Also check for watch_demand-specific fields.
+		if u := findWatchDemandFields(data); u != "" {
+			return u
+		}
+	}
+	// Try extracting "vod":"..." pattern (used by _decrypt_video_key).
+	if m := vodURLRe.FindStringSubmatch(decrypted); len(m) > 1 {
+		u := strings.ReplaceAll(m[1], `\`, "")
+		if isMediaURL(u) {
+			return u
+		}
+	}
+	return ""
+}
+
+var vodURLRe = regexp.MustCompile(`"vod"\s*:\s*"(.*?)"`)
+
+// vodKeyRe can extract the AES decryption key for the vod URL if needed.
+// Source: _decrypt_video_key regex: "vod_key":"(.*?)"
+// Currently the watch_demand flow returns ready-to-use URLs so this is reserved.
+// var vodKeyRe = regexp.MustCompile(`"vod_key"\s*:\s*"(.*?)"`)
+
+// findWatchDemandFields looks for eoffcn-specific watch_demand response fields.
+// Source: Eoffcn_Course._normalize_watch_demand_data checks many whiteboard/
+// audio URL field variants.
+func findWatchDemandFields(v any) string {
+	watchDemandKeys := []string{
+		// Whiteboard play URLs
+		"white_board_play_url", "whiteBoardPlayUrl", "whiteBoardPlayURL",
+		"whiteboard_play_url", "whiteboardPlayUrl", "wbx_url", "wbxUrl",
+		// Whiteboard resource URLs
+		"white_board_resource_url", "whiteBoardResourceUrl", "whiteBoardResourceURL",
+		"whiteboard_resource_url", "whiteboardResourceUrl", "wbr_url", "wbrUrl",
+		// Board font
+		"board_font", "boardFont", "font_url", "fontUrl",
+		// Audio
+		"audio_url", "audioUrl",
+		// Standard media
+		"live_url", "video_url", "m3u8", "m3u8Url", "playUrl", "play_url", "url",
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		// If data field is present and is a dict/string, recurse into it.
+		if dataVal, ok := x["data"]; ok {
+			if u := findWatchDemandFields(dataVal); u != "" {
+				return u
+			}
+		}
+		for _, k := range watchDemandKeys {
+			if s := normalizeURL(valueString(x, k)); isMediaURL(s) {
+				return s
+			}
+		}
+		// Check "items" sub-array.
+		if items, ok := x["items"]; ok {
+			if u := findWatchDemandFields(items); u != "" {
+				return u
+			}
+		}
+		for _, child := range x {
+			if u := findWatchDemandFields(child); u != "" {
+				return u
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if u := findWatchDemandFields(child); u != "" {
+				return u
+			}
+		}
+	case string:
+		if s := normalizeURL(x); isMediaURL(s) {
+			return s
+		}
+		// May be a nested JSON string.
+		var inner any
+		if json.Unmarshal([]byte(x), &inner) == nil {
+			return findWatchDemandFields(inner)
+		}
+	}
+	return ""
 }
 
 func parseParams(raw string) eoffcnParams {
@@ -411,14 +667,14 @@ func collectWatchIDs(v any) watchIDs {
 	ids := watchIDs{}
 	var walk func(any)
 	walk = func(x any) {
-		if ids.VideoID != "" && ids.RoomID != "" && ids.Account != "" {
-			return
-		}
 		switch vv := x.(type) {
 		case map[string]any:
 			ids.VideoID = firstNonEmpty(ids.VideoID, valueString(vv, "video_id", "videoId", "vid"))
 			ids.RoomID = firstNonEmpty(ids.RoomID, valueString(vv, "room_id", "roomId"))
 			ids.Account = firstNonEmpty(ids.Account, valueString(vv, "account", "uid", "user_id"))
+			ids.K = firstNonEmpty(ids.K, valueString(vv, "k"))
+			// Capture live_url / video_url for parsing k and account.
+			ids.LiveURL = firstNonEmpty(ids.LiveURL, valueString(vv, "live_url", "video_url"))
 			for _, child := range vv {
 				walk(child)
 			}
@@ -440,6 +696,17 @@ func findMediaURL(v any) string {
 				return s
 			}
 		}
+		// Source: Eoffcn_Course._get_m3u8_info decrypts live_url / video_url with static AES key.
+		// Try AES-CBC decryption on opaque values that did not pass isMediaURL above.
+		for _, k := range []string{"live_url", "video_url"} {
+			raw := valueString(x, k)
+			if raw == "" {
+				continue
+			}
+			if dec := aesDecryptLiveURL(raw); isMediaURL(dec) {
+				return dec
+			}
+		}
 		for _, child := range x {
 			if s := findMediaURL(child); s != "" {
 				return s
@@ -457,6 +724,54 @@ func findMediaURL(v any) string {
 		}
 	}
 	return ""
+}
+
+// aesDecryptLiveURL attempts AES-CBC decryption of an encrypted URL string using the
+// static key/IV pair from the source (Eoffcn_Course._get_m3u8_info line 330).
+// The source uses AESEncrypt.aes_decrypt with key "1234567898882222" and IV "8NONwyJtHesysWpM".
+func aesDecryptLiveURL(encrypted string) string {
+	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		// Try raw hex or URL-safe base64 as fallback.
+		ciphertext, err = base64.URLEncoding.DecodeString(encrypted)
+		if err != nil {
+			return ""
+		}
+	}
+	block, err := aes.NewCipher([]byte(aesKey))
+	if err != nil {
+		return ""
+	}
+	if len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
+		return ""
+	}
+	mode := cipher.NewCBCDecrypter(block, []byte(aesIV))
+	plaintext := make([]byte, len(ciphertext))
+	mode.CryptBlocks(plaintext, ciphertext)
+
+	// Remove PKCS7 padding.
+	plaintext = pkcs7Unpad(plaintext)
+	if len(plaintext) == 0 {
+		return ""
+	}
+	return normalizeURL(string(plaintext))
+}
+
+// pkcs7Unpad removes PKCS#7 padding from decrypted data.
+func pkcs7Unpad(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	padLen := int(data[len(data)-1])
+	if padLen == 0 || padLen > aes.BlockSize || padLen > len(data) {
+		return data // not padded or invalid, return as-is
+	}
+	for i := len(data) - padLen; i < len(data); i++ {
+		if data[i] != byte(padLen) {
+			return data // invalid padding, return as-is
+		}
+	}
+	return data[:len(data)-padLen]
 }
 
 func mediaInfo(title, u string, h map[string]string) *extractor.MediaInfo {

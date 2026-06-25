@@ -85,11 +85,38 @@ func (n *Nmkjxy) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		}
 		entries = append(entries, &extractor.MediaInfo{Site: "nmkjxy", Title: vi.Name, Streams: map[string]extractor.Stream{"best": stream}, Subtitles: subtitles(item, playData), Extra: map[string]any{"video_id": vi.VideoID, "video_sn": vi.VideoSN, "video_num": cid, "video_nid": vi.VideoNID}})
 	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("nmkjxy: no playable videos found from api/video + VideoPlayed")
-	}
 	courseware := fetchCourseware(c, h, cid)
-	return &extractor.MediaInfo{Site: "nmkjxy", Title: sanitize(title), Entries: entries, Extra: map[string]any{"courseware": courseware}}, nil
+	cwSeen := map[string]bool{}
+	for i, cw := range courseware {
+		fileURL := cw["file_url"]
+		if fileURL == "" || cwSeen[fileURL] {
+			continue
+		}
+		cwSeen[fileURL] = true
+		name := cw["file_name"]
+		if name == "" {
+			name = fileNameFromURL(fileURL)
+		}
+		if name == "" {
+			name = fmt.Sprintf("courseware_%02d", i+1)
+		}
+		format := ext(fileURL, "bin")
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "nmkjxy",
+			Title: sanitize(name),
+			Streams: map[string]extractor.Stream{"file": {
+				Quality: "source",
+				URLs:    []string{fileURL},
+				Format:  format,
+				Headers: map[string]string{"Referer": referer, "Origin": origin},
+			}},
+			Extra: map[string]any{"kind": "file"},
+		})
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("nmkjxy: no playable videos or courseware files found")
+	}
+	return &extractor.MediaInfo{Site: "nmkjxy", Title: sanitize(title), Entries: entries}, nil
 }
 
 type videoInfo struct{ VideoID, VideoSN, VideoNID, Name string }
@@ -381,6 +408,24 @@ func pickFormat(u string) string {
 }
 
 var badName = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
+
+func fileNameFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	base := u.Path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	if decoded, err := url.QueryUnescape(base); err == nil {
+		base = decoded
+	}
+	return strings.TrimSpace(base)
+}
 
 func sanitize(s string) string {
 	s = badName.ReplaceAllString(strings.TrimSpace(s), "_")

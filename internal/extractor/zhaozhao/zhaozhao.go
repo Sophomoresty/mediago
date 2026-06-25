@@ -41,6 +41,9 @@ const (
 	yikao88Platform      = "PC"
 	yikao88APISignSecret = "4ad2d8f07ee9a358455375c2982f8a9a"
 	playSafePublicKeyPEM = "-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCTjFALEDjmjD2/0HVoWtHuAmEptQrV\nUy1bZxoSoDrpiyllHI9UtVMkt7fGcaX5eifaIpkF/cmvD4LUlv7ioPyUiSQ9SpRqZEsI\nWfvYOyXgFF0REo2cULp49PK6glN00NEUAi6VW1CCHBetQJau/HeDojzPWacSq7UlG2/e\nnEDTlQIDAQAB\n-----END PUBLIC KEY-----"
+	polyvPDXSecret = "OWtjN9xcDcc2cwXKxECpRgKw7piD4RwCdfOUlyNHFdSV0gHi="
+	// POLYV_IV used for key decryption (Zhaozhao_Config).
+	polyvIVHex = "01020305070B0D1113171D0705030201"
 )
 
 var (
@@ -49,7 +52,12 @@ var (
 	polyvVidRe    = regexp.MustCompile(`^[0-9A-Za-z]+_[0-9A-Za-z]+$`)
 	mediaURLRe    = regexp.MustCompile(`https?://[^"'\s<>]+(?:\.m3u8|\.mp4|\.flv|\.pdf|\.pptx?|\.docx?|\.xlsx?|\.zip|\.rar|\.7z|\.txt|\.png|\.jpe?g)[^"'\s<>]*`)
 	titleCleanRe  = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
-	playTokenAPIs = []string{
+	m3u8URIRe     = regexp.MustCompile(`URI="([^"]+)"`)
+	m3u8IVRe      = regexp.MustCompile(`IV\s*=\s*0x([0-9a-fA-F]+)`)
+	bitrateRe     = regexp.MustCompile(`_(\d+)\.m3u8(?:\?|$)`)
+	// polyvPDXIVBytes from Zhaozhao_Base.polyv_pdx_iv_bytes.
+	polyvPDXIVBytes = []byte{13, 22, 8, 12, 7, 6, 13, 1, 50, 11, 12, 8, 5, 16, 4, 1}
+	playTokenAPIs   = []string{
 		"https://api.yikao88.com/api-shop/course/pc/v5/getPolyvPlaySafe",
 		"https://api.yikao88.com/api-shop/course/pc/v5/getPlaySafe",
 		"https://api.yikao88.com/api-shop/course/pc/v5/getPlayToken",

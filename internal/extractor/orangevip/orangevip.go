@@ -15,6 +15,7 @@ import (
 
 const (
 	referer        = "https://www.orangevip.com"
+	userinfo_url   = "https://u.api.orangevip.com/Api/Index/getUserInfo"
 	course_url     = "https://clapp.orangevip.com/otm/web/course/list"
 	info_url       = "https://clapp.orangevip.com/otm/web/course/query/coursePeriod"
 	video_play_url = "https://api.baijiayun.com/web/playback/getPlayInfo?room_id=%s&token=%s&use_encrypt=0&render=jsonp"
@@ -49,6 +50,21 @@ type apiResp struct {
 
 var cidRe = regexp.MustCompile(`orangevip\.com/(?:clock/(\d+)|(?:my)?[cC]ourse[dD]etail/(\d+)|playcheckbjy/[^?]+/\?[^#]*?[cC]ourse[Ii]d=(\d+))`)
 
+// errnoRe mirrors Orangevip_Base._check_cookie: a valid session returns
+// `"errno":0` from getUserInfo. Source line: re.search('"errno"\\s*:\\s*0', resp).
+var errnoRe = regexp.MustCompile(`"errno"\s*:\s*0`)
+
+// checkCookie validates the session against u.api.orangevip.com/Api/Index/getUserInfo,
+// matching Orangevip_Base._check_cookie. The cookie jar attaches the .orangevip.com
+// cookies; a logged-in session yields `"errno":0`.
+func checkCookie(c *util.Client, h map[string]string) bool {
+	body, err := c.GetString(userinfo_url, h)
+	if err != nil {
+		return false
+	}
+	return errnoRe.MatchString(body)
+}
+
 func (s *Orangevip) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("orangevip requires login cookies")
@@ -56,6 +72,9 @@ func (s *Orangevip) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
 	h := headers()
+	if !checkCookie(c, h) {
+		return nil, fmt.Errorf("orangevip: cookie validation failed (getUserInfo did not return \"errno\":0); login required")
+	}
 	cid := parseCID(rawURL)
 	courses, _ := fetchCourses(c, h)
 	if cid == "" && len(courses) > 0 {
@@ -94,10 +113,12 @@ func (s *Orangevip) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 		st := extractor.Stream{Quality: "best", URLs: []string{videoURL}, Format: formatOf(videoURL), AudioURL: audioURL, Headers: h}
 		entries = append(entries, &extractor.MediaInfo{Site: "orangevip", Title: clean(fmt.Sprintf("[%d]--%s", i+1, first(le.Name, le.VideoID, le.LiveID))), Streams: map[string]extractor.Stream{"best": st}, Extra: map[string]any{"period_id": le.VideoID, "room_id": le.RoomID, "live_id": le.LiveID}})
 	}
+	files := fetchFiles(c, h, cid, "", 0)
+	entries = append(entries, fileEntries(files, h)...)
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("orangevip: no playable Baijiayun videos found from reviewPlayInfo")
+		return nil, fmt.Errorf("orangevip: no playable Baijiayun videos or courseware files found")
 	}
-	return &extractor.MediaInfo{Site: "orangevip", Title: clean(title), Entries: entries, Extra: map[string]any{"course_id": cid, "files": fetchFiles(c, h, cid, "")}}, nil
+	return &extractor.MediaInfo{Site: "orangevip", Title: clean(title), Entries: entries, Extra: map[string]any{"course_id": cid}}, nil
 }
 
 func fetchCourses(c *util.Client, h map[string]string) ([]course, error) {
@@ -189,7 +210,21 @@ func resolveBaijiayun(c *util.Client, h map[string]string, le lesson, token stri
 	return normalizeURL(videoURL), ""
 }
 
-func fetchFiles(c *util.Client, h map[string]string, cid, parentID string) []map[string]string {
+// courseFile mirrors the dict produced by Orangevip_Course._get_file_list:
+// {file_url, file_name, file_fmt, file_type, file_id}. file_type is the raw
+// isFolder value; the source treats file_type == "1" as a folder.
+type courseFile struct {
+	URL, Name, Fmt, Type, ID string
+}
+
+// fetchFiles walks the courseware tree like Orangevip_Course._download_files:
+// POST myCourseModelFile with {courseModelId, pguid}; for each node, file_type
+// == "1" means a folder and we recurse with its file_id as the new pguid,
+// otherwise it is a downloadable file. depth bounds runaway recursion.
+func fetchFiles(c *util.Client, h map[string]string, cid, parentID string, depth int) []courseFile {
+	if depth > 16 {
+		return nil
+	}
 	body, err := c.PostForm(file_url, map[string]string{"courseModelId": cid, "pguid": parentID}, h)
 	if err != nil {
 		return nil
@@ -198,18 +233,72 @@ func fetchFiles(c *util.Client, h map[string]string, cid, parentID string) []map
 	if json.Unmarshal([]byte(body), &resp) != nil {
 		return nil
 	}
-	var out []map[string]string
+	var out []courseFile
 	for _, f := range resp.Files {
-		if truthy(f["isFolder"]) {
-			out = append(out, fetchFiles(c, h, cid, firstText(f, "guid"))...)
-			continue
-		}
-		u := firstText(f, "netUrl", "file_url", "url")
-		if u == "" {
-			continue
-		}
+		// _get_file_list: file_type stores the raw isFolder value; file_name guard.
 		name := firstText(f, "fileName", "name", "title")
-		out = append(out, map[string]string{"file_url": normalizeURL(u), "file_name": name, "file_fmt": ext(name, u), "file_id": firstText(f, "guid")})
+		if name == "" {
+			continue
+		}
+		netURL := firstText(f, "netUrl", "file_url", "url")
+		fileType := firstText(f, "isFolder", "file_type")
+		fileID := firstText(f, "guid", "file_id")
+		// _download_inner_files: file_type == "1" -> folder, recurse on file_id.
+		if fileType == "1" {
+			out = append(out, fetchFiles(c, h, cid, fileID, depth+1)...)
+			continue
+		}
+		if netURL == "" {
+			continue
+		}
+		out = append(out, courseFile{
+			URL:  normalizeURL(netURL),
+			Name: name,
+			Fmt:  fileFmt(name, netURL),
+			Type: fileType,
+			ID:   fileID,
+		})
+	}
+	return out
+}
+
+// fileFmt mirrors _get_file_list's format derivation: prefer the extension from
+// the file name (rsplit('.', 1) when it yields two parts), else from the URL
+// path before '?'. Lowercased.
+func fileFmt(name, netURL string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 && i < len(name)-1 {
+		return strings.ToLower(name[i+1:])
+	}
+	if netURL != "" {
+		path := strings.Split(netURL, "?")[0]
+		if i := strings.LastIndex(path, "."); i >= 0 && i < len(path)-1 {
+			return strings.ToLower(path[i+1:])
+		}
+	}
+	return ""
+}
+
+// fileEntries turns courseware files into downloadable MediaInfo entries.
+// _download_one_file routes by file_fmt (mp4 -> video, pdf/ppt/doc/... ->
+// their download helper, fallback attach); each maps to a single-stream entry.
+func fileEntries(files []courseFile, h map[string]string) []*extractor.MediaInfo {
+	var out []*extractor.MediaInfo
+	for _, f := range files {
+		if f.URL == "" {
+			continue
+		}
+		st := extractor.Stream{
+			Quality: "file",
+			URLs:    []string{f.URL},
+			Format:  first(f.Fmt, formatOf(f.URL)),
+			Headers: h,
+		}
+		out = append(out, &extractor.MediaInfo{
+			Site:    "orangevip",
+			Title:   clean(f.Name),
+			Streams: map[string]extractor.Stream{"file": st},
+			Extra:   map[string]any{"file_id": f.ID, "file_fmt": f.Fmt, "kind": "courseware"},
+		})
 	}
 	return out
 }
@@ -320,13 +409,6 @@ func formatOf(u string) string {
 func truthy(v any) bool {
 	s := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
 	return s == "1" || s == "true" || s == "yes"
-}
-func ext(name, u string) string {
-	p := strings.Split(strings.Split(first(name, u), "?")[0], ".")
-	if len(p) > 1 {
-		return strings.ToLower(p[len(p)-1])
-	}
-	return ""
 }
 func regexGroup(s, pat string) string {
 	if m := regexp.MustCompile(pat).FindStringSubmatch(s); m != nil {

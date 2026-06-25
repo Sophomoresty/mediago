@@ -42,3 +42,12 @@
 ## 阻塞步骤
 
 无.
+
+## 新增对齐 (file/material nodes + courseBasis price)
+
+| 源码方法 (line) | Go 函数 (line) | 一致? |
+|---|---|---|
+| Course `_parse_node_sources` lines 533-541: file nodes from `datum`/`files` | `walkKaimingNode` lines 363-377, `parseKaimingFileInfo` | ✓ |
+| Course `_parse_file_info` lines 417-439: extract `file_url/url`, `file_name/name`, ext | `parseKaimingFileInfo` lines 410-436, `fileExtFromInfo` lines 441-463 | ✓ |
+| Course `_get_price` lines 226-269: paginate `courseBasis`, match `id`, extract `price/has_buy/title` | `fetchCourseBasisPrice` lines 261-312 | ✓ |
+| Course `_download_one_file` line 679: download file by type (pdf/mp4/ppt/doc/attach) | `buildKaimingEntry` file branch lines 482-492 | ✓ (direct URL entry) |

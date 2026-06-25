@@ -7,19 +7,19 @@
 //  2. GET  /course/playlist/{mid}?t=m3u8&_id={cid}&cdn=aliyun1
 //     or
 //     GET  /lesson/m3u8h5?mid={mid}&cid={cid}&ssl=1&cdn=aliyun1
-//     → encoded m3u8 manifest (URLs encoded
-//     by JS imooc_decode())
+//     → JSON envelope with imooc_decode-encoded m3u8 manifest
 //  3. POST {host}/course/endlearn / ajaxendlearn → close learn session
 //
-// imooc_decode() runs in a JS sandbox in the original Python source. Without a
-// JS engine we can't decode the URLs, so paid courses return a clear error
-// while still exercising the real startlearn/endlearn lifecycle. Free imooc.com
-// lessons whose JSON returns plain URLs work directly.
+// The imooc_decode algorithm is a concrete crypto transform (XOR + swap +
+// padding removal) implemented natively in Go — no JS runtime required.
+// Both free and paid content are supported.
 package imooc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -71,29 +71,232 @@ func (i *Imooc) Extract(rawURL string, opts *extractor.ExtractOpts) (info *extra
 		}()
 	}
 
-	// Fetch the encoded m3u8 manifest. For class.imooc.com paid content the
-	// response is JSON with imooc_decode-encoded URLs we can't process without
-	// a JS sandbox — return blocked rather than fabricating success.
+	// Fetch the m3u8 manifest. The response is either:
+	// (a) a JSON envelope with imooc_decode-encoded data in data.info or result, or
+	// (b) a raw #EXTM3U manifest (rare, free content).
 	apiURL := mediaURL(host, mid, cid)
 	body, err := c.GetString(apiURL, h)
 	if err != nil {
 		return nil, fmt.Errorf("fetch m3u8 manifest: %w", err)
 	}
 
-	// Free imooc.com lessons return a JSON envelope with plain "result"
-	// containing m3u8 URLs.
-	var free struct {
+	// Try raw m3u8 first.
+	if isM3U8(body) {
+		return buildResult(cid, body, host, nil), nil
+	}
+
+	// Try JSON with plain "result" field (some free content).
+	var freeEnv struct {
 		Result string `json:"result"`
 		Mpath  string `json:"mpath"`
 	}
-	if json.Unmarshal([]byte(body), &free) == nil && free.Result != "" {
-		return buildResult(cid, free.Result, host), nil
-	}
-	if isM3U8(body) {
-		return buildResult(cid, body, host), nil
+	if json.Unmarshal([]byte(body), &freeEnv) == nil && freeEnv.Result != "" {
+		if isM3U8(freeEnv.Result) {
+			return buildResult(cid, freeEnv.Result, host, nil), nil
+		}
 	}
 
-	return nil, fmt.Errorf("imooc paid content returned imooc_decode-encoded URLs (requires JS sandbox; not supported)")
+	// Try JSON with data.info field (paid content, requires imooc_decode).
+	masterPlaylist, err := decryptJSONInfo(body)
+	if err != nil {
+		return nil, fmt.Errorf("imooc decode master playlist: %w", err)
+	}
+
+	// The master playlist contains variant stream URLs. Pick the best one
+	// (highest bandwidth, last entry) and fetch+decode the actual playlist.
+	videoURL := selectBestVariant(masterPlaylist, host)
+	if videoURL == "" {
+		// The master playlist IS the actual playlist (single quality).
+		return buildResult(cid, masterPlaylist, host, nil), nil
+	}
+
+	// Fetch the variant playlist.
+	variantBody, err := c.GetString(videoURL, h)
+	if err != nil {
+		return nil, fmt.Errorf("fetch variant playlist: %w", err)
+	}
+
+	var playlist string
+	if isM3U8(variantBody) {
+		playlist = variantBody
+	} else {
+		playlist, err = decryptJSONInfo(variantBody)
+		if err != nil {
+			return nil, fmt.Errorf("imooc decode variant playlist: %w", err)
+		}
+	}
+
+	// Resolve HLS encryption keys (the key URI responses are also
+	// imooc_decode encoded in JSON envelopes).
+	hlsKeys := resolveHLSKeys(playlist, videoURL, c, h)
+
+	return buildResult(cid, playlist, host, hlsKeys), nil
+}
+
+// decryptJSONInfo parses a JSON response and decrypts the data.info field.
+func decryptJSONInfo(body string) (string, error) {
+	// Try data.info structure.
+	var env struct {
+		Data struct {
+			Info string `json:"info"`
+		} `json:"data"`
+		Result int    `json:"result"`
+		Code   int    `json:"code"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err == nil && env.Data.Info != "" {
+		decoded, err := decryptInfo(env.Data.Info)
+		if err != nil {
+			return "", fmt.Errorf("decrypt data.info: %w", err)
+		}
+		return string(decoded), nil
+	}
+
+	// Try "info" field at top level (older API format).
+	var topInfo struct {
+		Info string `json:"info"`
+	}
+	if err := json.Unmarshal([]byte(body), &topInfo); err == nil && topInfo.Info != "" {
+		decoded, err := decryptInfo(topInfo.Info)
+		if err != nil {
+			return "", fmt.Errorf("decrypt info: %w", err)
+		}
+		return string(decoded), nil
+	}
+
+	// Try regex extraction as fallback.
+	m := regexp.MustCompile(`"info"\s*:\s*"(.*?)"`).FindStringSubmatch(body)
+	if len(m) > 1 && m[1] != "" {
+		decoded, err := decryptInfo(m[1])
+		if err != nil {
+			return "", fmt.Errorf("decrypt info (regex): %w", err)
+		}
+		return string(decoded), nil
+	}
+
+	return "", fmt.Errorf("no imooc_decode-encoded info field found in response")
+}
+
+// selectBestVariant extracts the best (last, typically highest bandwidth)
+// variant stream URL from an HLS master playlist.
+func selectBestVariant(master string, host string) string {
+	pattern := regexp.MustCompile(`(https?://[^\s]+)`)
+	matches := pattern.FindAllString(master, -1)
+
+	// Filter to variant URLs matching the host domain.
+	var variants []string
+	hostDomain := extractDomain(host)
+	for _, u := range matches {
+		if strings.Contains(u, hostDomain) && strings.Contains(u, "/video/") {
+			variants = append(variants, u)
+		}
+	}
+	if len(variants) == 0 {
+		// Try any URL that looks like an m3u8.
+		for _, u := range matches {
+			if strings.HasSuffix(u, ".m3u8") || strings.Contains(u, ".m3u8?") {
+				variants = append(variants, u)
+			}
+		}
+	}
+	if len(variants) == 0 {
+		return ""
+	}
+	return variants[len(variants)-1] // last = highest bandwidth typically
+}
+
+// resolveHLSKeys fetches and decrypts all HLS encryption keys referenced
+// in the playlist. Returns a map of key-URI -> base64-encoded key bytes.
+func resolveHLSKeys(playlist, playlistURL string, c *util.Client, headers map[string]string) map[string]string {
+	keyURIs := extractKeyURIs(playlist)
+	if len(keyURIs) == 0 {
+		return nil
+	}
+
+	keys := make(map[string]string)
+	for _, uri := range keyURIs {
+		keyURL := resolveURL(playlistURL, uri)
+		body, err := c.GetBytes(keyURL, headers)
+		if err != nil {
+			continue
+		}
+
+		// If the key response is raw 16 bytes, use directly.
+		if len(body) == 16 {
+			keys[keyURL] = base64.StdEncoding.EncodeToString(body)
+			continue
+		}
+
+		// Otherwise it's a JSON envelope with imooc_decode-encoded key.
+		keyBytes, err := decryptKeyFromJSON(body)
+		if err != nil {
+			continue
+		}
+		if len(keyBytes) == 16 {
+			keys[keyURL] = base64.StdEncoding.EncodeToString(keyBytes)
+		}
+	}
+	return keys
+}
+
+// decryptKeyFromJSON decodes the JSON key response using imooc_decode.
+func decryptKeyFromJSON(body []byte) ([]byte, error) {
+	// Try JSON envelope with data.info.
+	var env struct {
+		Data struct {
+			Info string `json:"info"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err == nil && env.Data.Info != "" {
+		return decryptInfo(env.Data.Info)
+	}
+
+	// Try regex.
+	m := regexp.MustCompile(`"info"\s*:\s*"(.*?)"`).FindSubmatch(body)
+	if len(m) > 1 && len(m[1]) > 0 {
+		return decryptInfo(string(m[1]))
+	}
+
+	return nil, fmt.Errorf("no info field in key response")
+}
+
+// extractKeyURIs finds all #EXT-X-KEY URI= values in an HLS playlist.
+func extractKeyURIs(playlist string) []string {
+	re := regexp.MustCompile(`#EXT-X-KEY:[^\n]*\bURI=["']([^"']+)["']`)
+	matches := re.FindAllStringSubmatch(playlist, -1)
+	var uris []string
+	seen := make(map[string]bool)
+	for _, m := range matches {
+		if !seen[m[1]] {
+			uris = append(uris, m[1])
+			seen[m[1]] = true
+		}
+	}
+	return uris
+}
+
+// resolveURL resolves a potentially relative URI against a base URL.
+func resolveURL(base, ref string) string {
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		return ref
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return u.ResolveReference(r).String()
+}
+
+func extractDomain(host string) string {
+	u, err := url.Parse(host)
+	if err != nil {
+		return "imooc.com"
+	}
+	return u.Hostname()
 }
 
 func parseURL(u string) (cid, mid, host string) {
@@ -133,19 +336,26 @@ func mediaURL(host, mid, cid string) string {
 	return fmt.Sprintf("%s/course/playlist/%s?t=m3u8&_id=%s&cdn=aliyun1", host, mid, cid)
 }
 
-func buildResult(cid, m3u8, host string) *extractor.MediaInfo {
-	return &extractor.MediaInfo{
+func buildResult(cid, m3u8, host string, hlsKeys map[string]string) *extractor.MediaInfo {
+	stream := extractor.Stream{
+		Quality: "default",
+		URLs:    []string{m3u8},
+		Format:  "m3u8",
+		Headers: map[string]string{"Referer": host + "/"},
+	}
+	result := &extractor.MediaInfo{
 		Site:  "imooc",
 		Title: "imooc_" + cid,
 		Streams: map[string]extractor.Stream{
-			"hls": {
-				Quality: "default",
-				URLs:    []string{m3u8},
-				Format:  "m3u8",
-				Headers: map[string]string{"Referer": host + "/"},
-			},
+			"hls": stream,
 		},
 	}
+	if len(hlsKeys) > 0 {
+		result.Extra = map[string]any{
+			"hls_keys": hlsKeys,
+		}
+	}
+	return result
 }
 
 func isM3U8(body string) bool {

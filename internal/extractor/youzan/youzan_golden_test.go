@@ -58,7 +58,7 @@ func installMockTransport(t *testing.T, httpURL, httpsURL string) {
 	t.Cleanup(func() { http.DefaultTransport = previous })
 }
 
-func containsAny(s string, needles []string) bool {
+func containsAnyNeedle(s string, needles []string) bool {
 	for _, needle := range needles {
 		if strings.Contains(s, needle) {
 			return true
@@ -72,7 +72,7 @@ func assertGoldenOutcome(t *testing.T, media *extractor.MediaInfo, err error) {
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		allowed := []string{"youzan", "login", "cookie", "auth", "blocked", "rejected", "cannot parse", "parse", "invalid character", "no playable", "no media", "empty", "failed", "requires", "required", "not found", "missing", "token"}
-		if !containsAny(msg, allowed) {
+		if !containsAnyNeedle(msg, allowed) {
 			t.Fatalf("unexpected extractor error: %v", err)
 		}
 		return

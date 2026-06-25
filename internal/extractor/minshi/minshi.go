@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 
@@ -106,10 +107,14 @@ func (s *Minshi) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		name := clean(fmt.Sprintf("[%d]--%s", i+1, first(le.Title, vid)))
 		entries = append(entries, &extractor.MediaInfo{Site: "minshi", Title: name, Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{streamURL}, Format: formatOf(streamURL), Headers: h}}, Extra: map[string]any{"course_table_id": le.TableID, "video_id": vid, "playsafe": play.Token}})
 	}
+	// Promote source materials / file artifacts to first-class entries.
+	fileEntries := collectFileEntries(c, cid, lessons, h)
+	entries = append(entries, fileEntries...)
+
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("minshi: no playable Polyv videos found from videoEncryptedInfo")
+		return nil, fmt.Errorf("minshi: no playable videos or downloadable files found")
 	}
-	return &extractor.MediaInfo{Site: "minshi", Title: clean(title), Entries: entries, Extra: map[string]any{"course_id": cid, "materials": collectFiles(c, cid, lessons, h)}}, nil
+	return &extractor.MediaInfo{Site: "minshi", Title: clean(title), Entries: entries, Extra: map[string]any{"course_id": cid}}, nil
 }
 
 type playToken struct{ Token, VideoID string }
@@ -191,27 +196,107 @@ func collectLessons(v any) []lesson {
 	return out
 }
 
-func collectFiles(c *util.Client, cid string, lessons []lesson, h map[string]string) []map[string]string {
-	var out []map[string]string
+// collectFileEntries fetches material lists for each lesson and returns
+// downloadable file artifacts as first-class MediaInfo entries.
+// Mirrors Minshi_Course._get_material_list + _build_file_info from source.
+func collectFileEntries(c *util.Client, cid string, lessons []lesson, h map[string]string) []*extractor.MediaInfo {
+	var out []*extractor.MediaInfo
 	seen := map[string]bool{}
-	for _, le := range lessons {
+	for i, le := range lessons {
 		if le.TableID == "" {
 			continue
 		}
-		v, err := requestAPI(c, material_api, "POST", map[string]string{"courseTableId": le.TableID}, headers("/courseCatalog/"+cid))
+		v, err := requestAPI(c, material_api, "POST", map[string]string{"courseTableId": le.TableID}, headers("/courseCatalog/"+le.TableID))
 		if err != nil {
 			continue
 		}
+		fileIdx := 0
 		walk(v, func(m map[string]any) {
 			u := firstTextMap(m, "path", "filePath", "url", "fileUrl", "downloadUrl")
 			if u == "" || seen[u] {
 				return
 			}
 			seen[u] = true
-			out = append(out, map[string]string{"file_url": absURL(u), "file_name": firstTextMap(m, "fileName", "name", "title"), "file_fmt": firstTextMap(m, "fileType")})
+			fileIdx++
+			fileURL := absURL(u)
+			fileName := firstTextMap(m, "fileName", "name", "title")
+			if fileName == "" {
+				parsed, err := url.Parse(fileURL)
+				if err == nil {
+					fileName = path.Base(parsed.Path)
+				}
+			}
+			if fileName == "" {
+				return
+			}
+			fileFmt := normalizeFileFmt(firstTextMap(m, "fileType"), fileName, fileURL)
+			// Strip extension from display name (source: _build_file_info)
+			displayName := fileName
+			if dot := strings.LastIndex(displayName, "."); dot >= 0 {
+				displayName = displayName[:dot]
+			}
+			entryTitle := clean(fmt.Sprintf("(%d.%d)--%s", i+1, fileIdx, displayName))
+			streamKey := "file"
+			if fileFmt != "" {
+				streamKey = fileFmt
+			}
+			out = append(out, &extractor.MediaInfo{
+				Site:  "minshi",
+				Title: entryTitle,
+				Streams: map[string]extractor.Stream{
+					streamKey: {
+						Quality: "file",
+						URLs:    []string{fileURL},
+						Format:  fileFmt,
+						Headers: h,
+					},
+				},
+				Extra: map[string]any{
+					"type":      "file",
+					"file_url":  fileURL,
+					"file_name": fileName,
+					"file_fmt":  fileFmt,
+				},
+			})
 		})
 	}
 	return out
+}
+
+// normalizeFileFmt replicates Minshi_Course._normalize_file_fmt from source.
+func normalizeFileFmt(raw, fileName, fileURL string) string {
+	raw = strings.TrimSpace(strings.ToLower(strings.Trim(raw, ".")))
+	// Handle MIME-style subtypes (e.g. "application/pdf")
+	if i := strings.LastIndex(raw, "/"); i >= 0 {
+		raw = raw[i+1:]
+	}
+	mimeMap := map[string]string{
+		"vnd.openxmlformats-officedocument.wordprocessingml.document":    "docx",
+		"msword":    "doc",
+		"vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+		"vnd.ms-powerpoint": "ppt",
+		"application/pdf":   "pdf",
+	}
+	if mapped, ok := mimeMap[raw]; ok {
+		raw = mapped
+	}
+	// Source: prefer filename extension over MIME when file_fmt is non-empty and filename has dot
+	if raw != "" {
+		if dot := strings.LastIndex(fileName, "."); dot >= 0 {
+			raw = strings.ToLower(fileName[dot+1:])
+		}
+	}
+	// Fall back to URL path extension
+	if raw == "" {
+		parsed, err := url.Parse(fileURL)
+		if err == nil {
+			p := parsed.Path
+			if dot := strings.LastIndex(p, "."); dot >= 0 {
+				raw = strings.ToLower(p[dot+1:])
+			}
+		}
+	}
+	return raw
 }
 
 func parseCID(rawURL string) string {

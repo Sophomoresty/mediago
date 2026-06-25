@@ -51,15 +51,10 @@ const (
 	columnAudioURL = "https://www.icourse163.org/web/j/columnBean.getArticleInfoVo.rpc?csrfKey="
 )
 
-// Source URL constants preserved from Mooc163 sibling flows that this package
-// explicitly rejects today but must keep source-visible domains aligned.
+// App "我的课程" (Icourse163_App) course-list API, from Icourse163_App source.
 const (
-	hep_api                = "https://etextbook.hep.com.cn/ebookapi"
-	course_site            = "https://ke.youdao.com"
-	course_list_url        = "https://ke.youdao.com/course/app/mycoursev3.json?courseStatus=%s&page=%s"
-	new_video_url          = "https://ke.youdao.com/course/detail/getLessonInfo2.json?courseId=%s&lessonId=%s"
-	youdao_login_check_url = "https://dict.youdao.com/login/acc/co/cq?product=DICT"
-	youdao_test_course_url = "https://ke.youdao.com/course/detail/220912?loginBack=true&Pdt=jpkWeb"
+	appMoocCourseListURL   = "https://www.icourse163.org/web/j/learnerCourseRpcBean.getMyLearnedCoursePanelList.rpc?csrfKey="
+	appColumnCourseListURL = "https://www.icourse163.org/web/j/columnBean.getColumnInfoListForMember.rpc?csrfKey="
 )
 
 // Main-course pattern chosen to intersect with Mooc_Config.courses_re['Icourse163_Mooc']:
@@ -74,10 +69,16 @@ var patterns = []string{
 	`(?:www\.)?icourse163\.org/column/learn/\d+(?:/.*?\.htm)?`,
 	`kaoyan\.icourse163\.org/course/terms/\d+.*course[Ii]d=\d+`,
 	`(?:www\.)?icourse163\.org/live/.*?\d+\.htm`,
+	// App "我的课程" course-list (Icourse163_App)
+	`(?:www\.)?icourse163\.org/(?:home\.htm|mycourse)`,
 }
 
 var moocURLRe = regexp.MustCompile(
 	`^https?://www\.icourse163\.org/(?P<mooc>[^/]*?/?)(?:learn|course)/(?P<cid>[%\w-]+-\d+)(?:.*?tid=(?P<tid>\d+))?`,
+)
+
+var appURLRe = regexp.MustCompile(
+	`^https?://(?:www\.)?icourse163\.org/(?:home\.htm|mycourse)`,
 )
 
 func init() {
@@ -103,6 +104,9 @@ func (i *ICourse163) Extract(rawURL string, opts *extractor.ExtractOpts) (*extra
 	}
 	if ky, ok := parseKaoyanURL(rawURL); ok {
 		return extractKaoyan(c, ky)
+	}
+	if appURLRe.MatchString(rawURL) {
+		return extractAppCourseList(c)
 	}
 
 	m := moocURLRe.FindStringSubmatch(rawURL)

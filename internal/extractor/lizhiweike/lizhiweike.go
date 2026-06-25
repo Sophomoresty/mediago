@@ -77,6 +77,13 @@ func (l *Lizhiweike) Extract(rawURL string, opts *extractor.ExtractOpts) (*extra
 		return nil, fmt.Errorf("lizhiweike info %s/%s: %w", target.Type, target.ID, err)
 	}
 	title := firstText(target.Title, nestedText(info, "data", "share_info", "share_title"), "lizhiweike_"+target.ID)
+	price := lizhiExtractPrice(info)
+	purchased := lizhiExtractPurchased(info, target)
+	if price > 0 && purchased {
+		if refined := lizhiRefineOrderPrice(c, sess, target.ID); refined > 0 {
+			price = refined
+		}
+	}
 	lectures := lizhiLecturesFromInfo(info, target)
 	entries := make([]*extractor.MediaInfo, 0, len(lectures))
 	for i, item := range lectures {
@@ -88,7 +95,61 @@ func (l *Lizhiweike) Extract(rawURL string, opts *extractor.ExtractOpts) (*extra
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("lizhiweike: no playable lecture entries for %s/%s", target.Type, target.ID)
 	}
-	return &extractor.MediaInfo{Site: "lizhiweike", Title: title, Entries: entries, Extra: map[string]any{"course_type": target.Type, "course_id": target.ID}}, nil
+	extra := map[string]any{"course_type": target.Type, "course_id": target.ID}
+	if price > 0 {
+		extra["price"] = price
+	}
+	if purchased {
+		extra["purchased"] = true
+	}
+	return &extractor.MediaInfo{Site: "lizhiweike", Title: title, Entries: entries, Extra: extra}, nil
+}
+
+// lizhiExtractPrice extracts the initial course price from the info response.
+// Source: Lizhiweike_Base._update_common_info – checks data.resell.money then data.channel.money (cents→yuan).
+func lizhiExtractPrice(info map[string]any) float64 {
+	if v := numOf(nested(info, "data", "resell", "money")); v > 0 {
+		return v / 100
+	}
+	if v := numOf(nested(info, "data", "channel", "money")); v > 0 {
+		return v / 100
+	}
+	return 0
+}
+
+// lizhiExtractPurchased returns whether the current user has purchased/subscribed the course.
+// Source: Lizhiweike_Course._get_infos – checks data.channel_access or data.lecture_access (granted || subscribed).
+func lizhiExtractPurchased(info map[string]any, target lizhiTarget) bool {
+	if target.Type == "channel" || !target.Single {
+		access := mapAny(nested(info, "data", "channel_access"))
+		return boolOf(access["granted"]) || boolOf(access["subscribed"])
+	}
+	access := mapAny(nested(info, "data", "lecture_access"))
+	return boolOf(access["granted"]) || boolOf(access["subscribed"])
+}
+
+// lizhiRefineOrderPrice fetches the buy_record endpoint and finds the actual paid fee
+// for the given course id. Returns fee/100 (yuan) or 0 if not found.
+// Source: Lizhiweike_Base._get_order_price.
+func lizhiRefineOrderPrice(c *util.Client, sess *lizhiSession, courseID string) float64 {
+	body, err := c.GetString(urlBuyRecord, sess.Headers)
+	if err != nil {
+		return 0
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return 0
+	}
+	for _, rec := range records(nested(resp, "data", "records")) {
+		invoice := mapAny(rec["invoice"])
+		if firstText(invoice["object_option_id"]) == courseID {
+			if fee := numOf(invoice["fee"]); fee > 0 {
+				return fee / 100
+			}
+			break
+		}
+	}
+	return 0
 }
 
 func lizhiBuildSession(c *util.Client, jar http.CookieJar) (*lizhiSession, error) {

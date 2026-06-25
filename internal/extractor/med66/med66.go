@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
@@ -17,10 +19,12 @@ const (
 	LOGIN_URL            = "https://www.med66.com/OtherItem/loginAgain/index.shtml"
 	MEMBER_HOME_URL      = "https://member.med66.com/homes/mycourse"
 	COURSE_INFO_URL      = "https://member.med66.com/homes/mycourse/courseInfo"
-	COURSEWARE_INFO_URL  = "https://member.med66.com/homes/course/courseClassWareInfo"
+	COURSEWARE_INFO_URL   = "https://member.med66.com/homes/course/courseClassWareInfo"
 	ELEARNING_HOME_URL   = "https://elearning.med66.com/"
 	LIVE_REPLAY_INFO_URL = "https://live.cdeledu.com/liveapi/entry/getReplayInfo"
 	LIVE_REFERER_URL     = "https://live.cdeledu.com/"
+	MATERIALS_URL        = "https://elearning.med66.com/xcware/download/teachingMaterials.shtm?cwareID={cware_id}&iskcjy=1&identity={identity}"
+	MATERIAL_DOWNLOAD_URL = "https://elearning.med66.com/data2file/downloadFile/getWordVipFile?cwareID=&fileUrl={file_url}&fileReName={file_name}"
 )
 
 var patterns = []string{`(?:[\w-]+\.)?med66\.com/`, `live\.cdeledu\.com/`}
@@ -34,8 +38,14 @@ type Med66 struct{}
 func (m *Med66) Patterns() []string { return patterns }
 
 var (
-	courseIDRe = regexp.MustCompile(`(?i)(?:courseId|course_id)=((?:med)?\d+)`)
-	goToLiveRe = regexp.MustCompile(`goToLive\(\s*['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]*)['"])?`)
+	courseIDRe      = regexp.MustCompile(`(?i)(?:courseId|course_id)=((?:med)?\d+)`)
+	goToLiveRe     = regexp.MustCompile(`goToLive\(\s*['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]*)['"])?`)
+	h5VarsRe       = regexp.MustCompile(`window\.cdelmedia\.h5Vars\s*=\s*JSON\.parse\('(?s:(.*?))'\)`)
+	openURLRe      = regexp.MustCompile(`window\.open\(["']([^"']+)["']`)
+	videoIDRe      = regexp.MustCompile(`(?:videoID|videoId|video_id)=([0-9A-Za-z_\-]+)`)
+	attrRe         = regexp.MustCompile(`(?i)(data-[a-z0-9_-]+)\s*=\s*["']([^"']+)["']`)
+	htmlTagRe      = regexp.MustCompile(`<[^>]+>`)
+	directFileExts = map[string]bool{".pdf": true, ".doc": true, ".docx": true, ".ppt": true, ".pptx": true, ".zip": true, ".rar": true, ".7z": true, ".caj": true}
 )
 
 func (m *Med66) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
@@ -72,34 +82,77 @@ func (m *Med66) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.
 
 	var entries []*extractor.MediaInfo
 	for i, ware := range wares {
+		wareIndex := i + 1
+
+		// 1. Direct material: showType=5 or file extension in URL
+		if isDirectMaterial(ware) {
+			if entry := buildDirectMaterialEntry(ware, wareIndex); entry != nil {
+				entries = append(entries, entry)
+			}
+			continue
+		}
+
 		if !isRecordedWare(ware) {
 			continue
 		}
+
 		pageURL := normalizeURL(firstString(ware, "cwDirURL", "dirURL", "cwURL"), ELEARNING_HOME_URL)
 		if pageURL == "" {
 			continue
 		}
+
 		body, err := c.GetString(pageURL, map[string]string{"Referer": MEMBER_HOME_URL})
 		if err != nil {
 			continue
 		}
-		matches := goToLiveRe.FindAllStringSubmatch(body, -1)
-		for j, match := range matches {
-			playURL := normalizeURL(match[1], ELEARNING_HOME_URL)
-			if playURL == "" {
-				continue
+
+		if strings.Contains(body, "课程暂未开通") || strings.Contains(body, "暂未开通") {
+			continue
+		}
+
+		cwareID := firstString(ware, "cwareId", "cwareID", "cware_id")
+		identity := firstString(ware, "identity")
+		if identity == "" {
+			identity = course.EduSubjectID
+		}
+
+		// 2. Live replay videos (goToLive links)
+		if strings.Contains(body, "goToLive(") {
+			matches := goToLiveRe.FindAllStringSubmatch(body, -1)
+			for j, match := range matches {
+				playURL := normalizeURL(match[1], ELEARNING_HOME_URL)
+				if playURL == "" {
+					continue
+				}
+				title := fmt.Sprintf("%02d.%02d %s", wareIndex, j+1, titleFromWare(ware))
+				entry, err := resolveReplayEntry(c, playURL, pageURL, uid, title)
+				if err == nil && entry != nil {
+					entry.Extra["course_id"] = course.CourseID
+					entry.Extra["cware_id"] = cwareID
+					entries = append(entries, entry)
+				}
 			}
-			title := fmt.Sprintf("%02d.%02d %s", i+1, j+1, titleFromWare(ware))
-			entry, err := resolveReplayEntry(c, playURL, pageURL, uid, title)
-			if err == nil && entry != nil {
-				entry.Extra["course_id"] = course.CourseID
-				entry.Extra["cware_id"] = firstString(ware, "cwareId", "cwareID", "cware_id")
-				entries = append(entries, entry)
+		} else {
+			// 3. Regular recorded videos (continueStudyVideo / h5Vars)
+			regularVideos := parseRegularVideoTree(body, ware, wareIndex)
+			for j, rv := range regularVideos {
+				entry, err := resolveRegularVideo(c, rv, wareIndex, j+1)
+				if err == nil && entry != nil {
+					entry.Extra["course_id"] = course.CourseID
+					entry.Extra["cware_id"] = cwareID
+					entries = append(entries, entry)
+				}
 			}
+		}
+
+		// 4. Material files from MATERIALS_URL
+		if cwareID != "" {
+			materialEntries := parseMaterialTree(c, cwareID, identity, ware, wareIndex)
+			entries = append(entries, materialEntries...)
 		}
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("med66: no playable live replay entries found (course locked or schema changed)")
+		return nil, fmt.Errorf("med66: no playable entries found (course locked or schema changed)")
 	}
 
 	return &extractor.MediaInfo{Site: "med66", Title: course.Title, Entries: entries}, nil
@@ -177,6 +230,327 @@ func fetchCoursewares(c *util.Client, headers map[string]string, course med66Cou
 		return nil, fmt.Errorf("med66: empty wareList for courseId %s", course.CourseID)
 	}
 	return out, nil
+}
+
+// isDirectMaterial returns true when the courseware entry has showType=5 or a
+// direct file URL with a downloadable extension (pdf, docx, etc.).
+// Source: Med66_Course._is_direct_material (line 461)
+func isDirectMaterial(ware anyMap) bool {
+	rawURL := normalizeURL(firstString(ware, "cwDirURL", "cwURL"), ELEARNING_HOME_URL)
+	if rawURL == "" {
+		return false
+	}
+	if toInt(firstString(ware, "showType")) == 5 {
+		return true
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(u.Path))
+	return directFileExts[ext]
+}
+
+// buildDirectMaterialEntry creates a MediaInfo entry for a direct-download
+// material file (no API resolution needed).
+// Source: Med66_Course._build_direct_material_tree (line 479)
+func buildDirectMaterialEntry(ware anyMap, wareIndex int) *extractor.MediaInfo {
+	rawURL := normalizeURL(firstString(ware, "cwDirURL", "cwURL"), ELEARNING_HOME_URL)
+	if rawURL == "" {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	ext := strings.ToLower(strings.TrimPrefix(path.Ext(u.Path), "."))
+	if ext == "" {
+		ext = "pdf"
+	}
+	name := firstString(ware, "cwName", "title")
+	if name == "" {
+		name = "课程资料"
+	}
+	title := fmt.Sprintf("(%d.1.1.1)--%s", wareIndex, util.SanitizeFilename(name))
+	return &extractor.MediaInfo{
+		Site:  "med66",
+		Title: title,
+		Streams: map[string]extractor.Stream{
+			"default": {
+				Quality: "source",
+				URLs:    []string{rawURL},
+				Format:  ext,
+				Headers: map[string]string{"Referer": ELEARNING_HOME_URL},
+			},
+		},
+		Extra: map[string]any{"type": "file", "file_fmt": ext},
+	}
+}
+
+// med66RegularVideo represents a non-live-replay recorded video entry.
+type med66RegularVideo struct {
+	Title    string
+	PlayURL  string
+	VideoID  string
+	CwareID  string
+	Identity string
+}
+
+// parseRegularVideoTree extracts non-live-replay video entries from the
+// courseware page HTML (continueStudyVideo / window.open links).
+// Source: Zhengbao_Course._parse_video_tree (line 440)
+func parseRegularVideoTree(body string, ware anyMap, wareIndex int) []med66RegularVideo {
+	var out []med66RegularVideo
+	seen := map[string]bool{}
+	for _, block := range strings.Split(body, "continueStudyVideo") {
+		if !strings.Contains(block, "window.open") {
+			continue
+		}
+		m := openURLRe.FindStringSubmatch(block)
+		if len(m) < 2 {
+			continue
+		}
+		playURL := normalizeURL(m[1], ELEARNING_HOME_URL)
+		if playURL == "" {
+			continue
+		}
+		vid := ""
+		if vm := videoIDRe.FindStringSubmatch(playURL); len(vm) > 1 {
+			vid = vm[1]
+		}
+		if vid == "" {
+			vid = fmt.Sprintf("video-%d", len(out)+1)
+		}
+		if seen[vid] {
+			continue
+		}
+		seen[vid] = true
+		title := extractNearbyText(block)
+		if title == "" {
+			title = titleFromWare(ware)
+		}
+		out = append(out, med66RegularVideo{
+			Title:    fmt.Sprintf("[%d.%d]--%s", wareIndex, len(out)+1, title),
+			PlayURL:  playURL,
+			VideoID:  vid,
+			CwareID:  firstString(ware, "cwareId", "cwareID", "cware_id"),
+			Identity: firstString(ware, "identity"),
+		})
+	}
+	return out
+}
+
+// resolveRegularVideo resolves a non-live-replay video by fetching the play
+// page and extracting window.cdelmedia.h5Vars JSON for the videoPath.
+// Source: Zhengbao_Course._resolve_video_play_info (line 672)
+func resolveRegularVideo(c *util.Client, rv med66RegularVideo, wareIndex, videoIndex int) (*extractor.MediaInfo, error) {
+	if rv.PlayURL == "" {
+		return nil, fmt.Errorf("med66: empty play URL")
+	}
+	playURL := normalizeURL(rv.PlayURL, ELEARNING_HOME_URL)
+	format := pickFormat(playURL)
+	extra := map[string]any{
+		"video_id":  rv.VideoID,
+		"play_page": playURL,
+		"cware_id":  rv.CwareID,
+		"identity":  rv.Identity,
+	}
+
+	// If the URL is not already a direct media file, fetch the play page
+	// and extract h5Vars to find the videoPath.
+	if !strings.Contains(strings.ToLower(playURL), ".m3u8") && !strings.Contains(strings.ToLower(playURL), ".mp4") {
+		body, err := c.GetString(playURL, map[string]string{"Referer": ELEARNING_HOME_URL})
+		if err != nil {
+			return nil, err
+		}
+		vars := parseH5Vars(body)
+		if len(vars) == 0 {
+			return nil, fmt.Errorf("med66: no h5Vars in play page for %s", rv.VideoID)
+		}
+		if p := h5VarFirstString(vars, "videoPath", "video_path", "path", "url"); p != "" {
+			playURL = normalizeURL(strings.ReplaceAll(p, `\/`, `/`), ELEARNING_HOME_URL)
+			format = pickFormat(playURL)
+		}
+		if sub := h5VarFirstString(vars, "srtPath", "subPath", "subtitle", "subtitleUrl"); sub != "" {
+			extra["subtitle"] = normalizeURL(sub, ELEARNING_HOME_URL)
+		}
+	}
+	if playURL == "" {
+		return nil, fmt.Errorf("med66: no videoPath resolved for %s", rv.VideoID)
+	}
+	name := util.SanitizeFilename(firstNonEmpty(rv.Title, fmt.Sprintf("[%02d.%02d]--%s", wareIndex, videoIndex, rv.VideoID)))
+	return &extractor.MediaInfo{
+		Site:  "med66",
+		Title: name,
+		Streams: map[string]extractor.Stream{
+			"default": {
+				Quality:   "source",
+				URLs:      []string{playURL},
+				Format:    format,
+				NeedMerge: format == "m3u8",
+				Headers:   map[string]string{"Referer": ELEARNING_HOME_URL},
+			},
+		},
+		Extra: extra,
+	}, nil
+}
+
+// parseH5Vars extracts the window.cdelmedia.h5Vars JSON from a play page.
+// Source: Zhengbao_Course._resolve_video_play_info (line 685)
+func parseH5Vars(body string) map[string]any {
+	m := h5VarsRe.FindStringSubmatch(body)
+	if len(m) < 2 {
+		return nil
+	}
+	escaped := strings.ReplaceAll(m[1], `\/`, `/`)
+	escaped = strings.ReplaceAll(escaped, `\'`, `'`)
+	quoted := `"` + strings.ReplaceAll(escaped, `"`, `\"`) + `"`
+	if unquoted, err := strconv.Unquote(quoted); err == nil {
+		escaped = unquoted
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(escaped), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// h5VarFirstString extracts the first non-empty string from h5Vars map.
+func h5VarFirstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" && s != "<nil>" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// parseMaterialTree fetches the material listing page and extracts
+// downloadable file entries with their download URLs.
+// Source: Zhengbao_Course._parse_material_tree (line 531) with
+// Med66 URLs from Med66_Config (MATERIALS_URL, MATERIAL_DOWNLOAD_URL).
+func parseMaterialTree(c *util.Client, cwareID, identity string, ware anyMap, wareIndex int) []*extractor.MediaInfo {
+	api := strings.ReplaceAll(MATERIALS_URL, "{cware_id}", url.QueryEscape(cwareID))
+	api = strings.ReplaceAll(api, "{identity}", url.QueryEscape(identity))
+
+	body, err := c.GetString(api, map[string]string{"Referer": ELEARNING_HOME_URL})
+	if err != nil || body == "" {
+		return nil
+	}
+
+	type fileSpec struct {
+		Key    string
+		Format string
+		Suffix string
+	}
+	specs := []fileSpec{
+		{"data-fileurl", "docx", ""},
+		{"data-pdfurl", "pdf", ""},
+		{"data-sepurl", "docx", "-答案分离"},
+		{"data-seppdfurl", "pdf", "-答案分离"},
+	}
+
+	var entries []*extractor.MediaInfo
+	seen := map[string]bool{}
+	for _, attrs := range extractAttrs(body) {
+		name := firstNonEmpty(attrs["data-videoname"], attrs["title"])
+		if name == "" {
+			name = titleFromWare(ware)
+		}
+		if name == "" {
+			name = "课程资料"
+		}
+
+		for _, spec := range specs {
+			tok := strings.TrimSpace(attrs[spec.Key])
+			if tok == "" {
+				continue
+			}
+			dedup := spec.Key + "|" + tok
+			if seen[dedup] {
+				continue
+			}
+			seen[dedup] = true
+
+			fileName := util.SanitizeFilename(name + spec.Suffix)
+			dlURL := buildMaterialDownloadURL(tok, fileName, spec.Format)
+			if dlURL == "" {
+				continue
+			}
+
+			title := fmt.Sprintf("(%d.%d)--%s", wareIndex, len(entries)+1, fileName)
+			entries = append(entries, &extractor.MediaInfo{
+				Site:  "med66",
+				Title: title,
+				Streams: map[string]extractor.Stream{
+					"default": {
+						Quality: "source",
+						URLs:    []string{dlURL},
+						Format:  spec.Format,
+						Headers: map[string]string{"Referer": ELEARNING_HOME_URL},
+					},
+				},
+				Extra: map[string]any{"type": "file", "file_fmt": spec.Format, "file_token": tok},
+			})
+		}
+	}
+	return entries
+}
+
+// buildMaterialDownloadURL constructs the full download URL from a file token.
+// Source: Zhengbao_Course._build_material_url (line 749) with Med66 URL template.
+func buildMaterialDownloadURL(fileToken, fileName, fmtHint string) string {
+	if fileToken == "" {
+		return ""
+	}
+	fullName := fileName
+	if fmtHint != "" && !strings.HasSuffix(strings.ToLower(fullName), "."+strings.ToLower(fmtHint)) {
+		fullName += "." + fmtHint
+	}
+	u := strings.ReplaceAll(MATERIAL_DOWNLOAD_URL, "{file_url}", url.QueryEscape(fileToken))
+	u = strings.ReplaceAll(u, "{file_name}", url.QueryEscape(fullName))
+	return u
+}
+
+// extractAttrs parses HTML tags and extracts data-* attributes as maps.
+func extractAttrs(body string) []map[string]string {
+	var out []map[string]string
+	for _, tag := range regexp.MustCompile(`<[^>]+>`).FindAllString(body, -1) {
+		attrs := map[string]string{}
+		for _, m := range attrRe.FindAllStringSubmatch(tag, -1) {
+			attrs[strings.ToLower(m[1])] = strings.ReplaceAll(m[2], `\/`, `/`)
+		}
+		if len(attrs) > 0 {
+			out = append(out, attrs)
+		}
+	}
+	return out
+}
+
+// extractNearbyText extracts visible text from an HTML fragment.
+func extractNearbyText(html string) string {
+	text := htmlTagRe.ReplaceAllString(html, " ")
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > 80 {
+		text = string(runes[:80])
+	}
+	return strings.TrimSpace(text)
+}
+
+// toInt converts a string value to int, returning 0 on failure.
+func toInt(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func resolveReplayEntry(c *util.Client, playURL, referer, uid, title string) (*extractor.MediaInfo, error) {

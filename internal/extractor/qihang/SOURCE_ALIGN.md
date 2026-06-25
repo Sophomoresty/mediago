@@ -46,7 +46,15 @@
 | node.get('resourceList',[]) | ResourceList `json:"resourceList"` | ✓ |
 | resource.get('vid') | Vid `json:"vid"` | ✓ |
 | resource.get('resourceId') | ResourceID `json:"resourceId"` | ✓ |
+| resource.get('lectureUrl') | LectureURL `json:"lectureUrl"` | ✓ |
 | live result.get('data',{}).get('replayUrl','') | Data.ReplayURL `json:"replayUrl"` | ✓ |
+
+## studyResourceType 处理
+
+| 源码 type | 源码方法 | Go 函数 | 一致? |
+|---|---|---|---|
+| 2, 3 (video/live) | _parse_video_info | collectEntries → resolveVideo | ✓ |
+| 4 (file) | _parse_file_info | collectEntries → resolveFile | ✓ |
 
 ## 阻塞步骤 (如果有)
 

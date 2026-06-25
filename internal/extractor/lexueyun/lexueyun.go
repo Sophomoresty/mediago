@@ -16,6 +16,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -155,16 +158,32 @@ func (l *Lexueyun) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		return nil, err
 	}
 	entries := make([]*extractor.MediaInfo, 0)
+	fileSeen := map[string]bool{}
 	for ri, res := range lessons {
 		for li, les := range res.LessonList {
 			entry, err := resolveLesson(c, sess, sel, res, les, ri+1, li+1)
 			if err == nil && entry != nil {
 				entries = append(entries, entry)
 			}
+			// courseDataList: inline file attachments on each lesson
+			for fi, item := range les.CourseDataList {
+				fe := makeLexueFileEntry(item, ri+1, li+1, fi+1, fileSeen)
+				if fe != nil {
+					entries = append(entries, fe)
+				}
+			}
+		}
+	}
+	// getDatum: standalone courseware/datum files for the subject
+	datumItems := getDatum(c, sess, sel)
+	for di, item := range datumItems {
+		fe := makeLexueFileEntry(item, len(lessons)+1, 0, di+1, fileSeen)
+		if fe != nil {
+			entries = append(entries, fe)
 		}
 	}
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("lexueyun: no playable lesson video resolved")
+		return nil, fmt.Errorf("lexueyun: no playable lesson video or downloadable file resolved")
 	}
 	return &extractor.MediaInfo{Site: "lexueyun", Title: sel.title, Entries: entries}, nil
 }
@@ -345,4 +364,170 @@ func sunlandsMediaURL(c *util.Client, playURL string) (string, sunlandsVideo, er
 		}
 	}
 	return "", sunlandsVideo{}, fmt.Errorf("sunlands thirdLogin has no videoPlayUrls")
+}
+
+// getDatum fetches the standalone courseware/datum file list for a subject.
+// Source: Lexueyun_Course._get_datum  →  datumPath = /happyStudy/proxy/lexuesv/pc/getDatum
+func getDatum(c *util.Client, sess lexueSession, sel courseSel) []map[string]any {
+	body, err := requestLexue(c, sess.auth, datumPath, map[string]any{
+		"ordSerialNo": sel.ordSerialNo,
+		"packageId":   sel.packageID,
+		"subjectId":   sel.subjectID,
+		"stuId":       sess.stuID,
+	})
+	if err != nil {
+		return nil
+	}
+	var resp struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &resp) != nil {
+		return nil
+	}
+	var items []map[string]any
+	if json.Unmarshal(resp.Data, &items) != nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if item != nil {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// makeLexueFileEntry creates a downloadable file entry from a datum/courseData item.
+// It mirrors the source's _make_file_info and _normalize_file_url logic.
+// ri=resource index, li=lesson index (0 for datum-level files), fi=file index within the set.
+// fileSeen deduplicates by (dataId|bundleId|id|url|name).
+func makeLexueFileEntry(item map[string]any, ri, li, fi int, fileSeen map[string]bool) *extractor.MediaInfo {
+	if item == nil {
+		return nil
+	}
+	// Deduplicate by dataId / bundleId / id / url / name  (mirrors _file_key)
+	dedupKey := fileDedupeKey(item)
+	if dedupKey != "" && fileSeen[dedupKey] {
+		return nil
+	}
+	// Resolve file URL  (mirrors _normalize_file_url)
+	fileURL := normalizeLexueFileURL(item)
+	// Resolve title  (mirrors _make_file_info title pick)
+	title := firstNonEmpty(
+		anyString(item["dataName"]),
+		anyString(item["fileName"]),
+		anyString(item["name"]),
+		anyString(item["title"]),
+	)
+	if fileURL == "" && title == "" {
+		return nil
+	}
+	if fileURL == "" {
+		return nil
+	}
+	// Guess extension from URL path or title
+	ext := guessLexueFileExt(fileURL, title, "dat")
+	// Build display name matching source's _file_name pattern: "(ri.li.fi)--title"
+	var displayName string
+	if li > 0 {
+		displayName = fmt.Sprintf("(%d.%d.%d)--%s", ri, li, fi, firstNonEmpty(title, "资料"))
+	} else {
+		displayName = fmt.Sprintf("(%d)--%s", fi, firstNonEmpty(title, "资料"))
+	}
+	displayName = util.SanitizeFilename(stripLexueExt(displayName, ext))
+
+	if dedupKey != "" {
+		fileSeen[dedupKey] = true
+	}
+	return &extractor.MediaInfo{
+		Site:  "lexueyun",
+		Title: displayName,
+		Streams: map[string]extractor.Stream{
+			"file": {
+				Quality: "file",
+				URLs:    []string{fileURL},
+				Format:  ext,
+				Headers: map[string]string{
+					"Referer": urlReferer,
+					"Origin":  urlOrigin,
+				},
+			},
+		},
+		Extra: map[string]any{
+			"type":      "file",
+			"file_url":  fileURL,
+			"file_name": title,
+		},
+	}
+}
+
+// normalizeLexueFileURL resolves the download URL for a datum/courseData item.
+// Source: _normalize_file_url picks from url/fileUrl/downloadUrl/filePath, optionally
+// prepends prefix, then normalizes protocol-relative and root-relative URLs.
+func normalizeLexueFileURL(item map[string]any) string {
+	raw := firstNonEmpty(
+		anyString(item["url"]),
+		anyString(item["fileUrl"]),
+		anyString(item["downloadUrl"]),
+		anyString(item["filePath"]),
+	)
+	prefix := anyString(item["prefix"])
+	if prefix != "" && raw != "" && !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "//") {
+		raw = strings.TrimRight(prefix, "/") + "/" + strings.TrimLeft(raw, "/")
+	}
+	return normalizeURL(raw)
+}
+
+// fileDedupeKey mirrors _file_key: returns a stable key for deduplication.
+func fileDedupeKey(item map[string]any) string {
+	for _, k := range []string{"dataId", "bundleId", "id"} {
+		v := anyString(item[k])
+		if v != "" {
+			return k + ":" + v
+		}
+	}
+	u := normalizeLexueFileURL(item)
+	if u != "" {
+		return "url:" + u
+	}
+	n := firstNonEmpty(anyString(item["dataName"]), anyString(item["fileName"]), anyString(item["name"]))
+	if n != "" {
+		return "name:" + n
+	}
+	return ""
+}
+
+// guessLexueFileExt mirrors _guess_file_ext: tries URL path extension, then title extension.
+func guessLexueFileExt(fileURL, title, fallback string) string {
+	for _, source := range []string{fileURL, title} {
+		if source == "" {
+			continue
+		}
+		cleaned := source
+		if u, err := url.Parse(source); err == nil && u.Path != "" {
+			cleaned = u.Path
+		}
+		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path.Base(cleaned))), ".")
+		if ext == "jpeg" {
+			return "jpg"
+		}
+		if ext != "" && len(ext) <= 8 {
+			return ext
+		}
+	}
+	return fallback
+}
+
+// stripLexueExt removes a trailing .ext from a filename if it matches the given format.
+// Source: _strip_file_ext
+func stripLexueExt(filename, fileFmt string) string {
+	fileFmt = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fileFmt)), ".")
+	if fileFmt == "" {
+		return filename
+	}
+	suffix := "." + fileFmt
+	if strings.HasSuffix(strings.ToLower(filename), suffix) {
+		return filename[:len(filename)-len(suffix)]
+	}
+	return filename
 }

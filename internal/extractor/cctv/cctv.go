@@ -3,6 +3,7 @@ package cctv
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	neturl "net/url"
 	"regexp"
@@ -147,6 +148,7 @@ func (s hlsSelection) Quality() string {
 
 func cctvHeaders() map[string]string {
 	return map[string]string{
+		"cookie":     "",
 		"Accept":     "*/*",
 		"Origin":     cctvOrigin,
 		"Referer":    cctvReferer,
@@ -585,17 +587,37 @@ func extractGUID(html string) string {
 }
 
 var titlePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']`),
-	regexp.MustCompile(`<title>([^<]+)</title>`),
+	regexp.MustCompile(`(?i)<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']`),
+	regexp.MustCompile(`(?i)<meta\s+name=["']title["']\s+content=["']([^"']+)["']`),
+	regexp.MustCompile(`(?is)<div\s+class=["']tit["']\s*>(.*?)</div>`),
+	regexp.MustCompile(`(?i)<title>(.*?)</title>`),
 }
 
-func extractTitle(html string) string {
+var (
+	htmlTagRe    = regexp.MustCompile(`<[^>]+>`)
+	whitespaceRe = regexp.MustCompile(`\s+`)
+	titleCleanRe = regexp.MustCompile(`(?i)[_-].*?(?:cctv\.com|央视网).*$`)
+)
+
+func cleanText(text string) string {
+	text = html.UnescapeString(text)
+	text = htmlTagRe.ReplaceAllString(text, "")
+	text = whitespaceRe.ReplaceAllString(text, " ")
+	return strings.TrimSpace(text)
+}
+
+func extractTitle(body string) string {
 	for _, re := range titlePatterns {
-		if m := re.FindStringSubmatch(html); len(m) > 1 {
-			title := m[1]
-			cleanRe := regexp.MustCompile(`[_-].*?(?:cctv\.com|央视网).*$`)
-			title = cleanRe.ReplaceAllString(title, "")
-			return title
+		if m := re.FindStringSubmatch(body); len(m) > 1 {
+			title := cleanText(m[1])
+			if title == "" {
+				continue
+			}
+			title = titleCleanRe.ReplaceAllString(title, "")
+			title = strings.TrimSpace(title)
+			if title != "" {
+				return title
+			}
 		}
 	}
 	return ""

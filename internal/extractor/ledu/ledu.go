@@ -11,6 +11,7 @@
 package ledu
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -170,9 +171,30 @@ func fetchCourseDetails(c *util.Client, headers map[string]string, stuID, course
 func buildEntries(c *util.Client, details []map[string]any, headers map[string]string) []*extractor.MediaInfo {
 	var entries []*extractor.MediaInfo
 	seen := map[string]bool{}
+	classID := headers["stdClassId"]
+	stuID := headers["stuId"]
+	puid := firstText(cookieValue(headers["Cookie"], "puid"), cookieValue(headers["Cookie"], "pu_uid"), cookieValue(headers["Cookie"], "uid"))
+
 	for i, detail := range details {
 		roots := []map[string]any{detail}
-		if liveID := firstText(detail["liveId"], detail["live_id"]); liveID != "" {
+		liveID := firstText(detail["liveId"], detail["live_id"])
+
+		// 1. classroomInitAuth -- critical precondition for video playback
+		if liveID != "" {
+			ctx := cloneHeaders(headers)
+			ctx["liveId"] = liveID
+			ctx["tutorId"] = firstText(detail["tutorId"], detail["tutor_id"])
+			if authPayload, err := classroomInitAuth(c, ctx, liveID); err == nil {
+				authToken, initData := initAuthTokens(authPayload)
+				_ = authToken // token is set via response headers in real flow
+				if initData != nil {
+					roots = append(roots, nestedMaps(initData)...)
+				}
+			}
+		}
+
+		// 2. Video init (existing path)
+		if liveID != "" {
 			ctx := cloneHeaders(headers)
 			ctx["liveId"] = liveID
 			ctx["tutorId"] = firstText(detail["tutorId"], detail["tutor_id"])
@@ -180,11 +202,70 @@ func buildEntries(c *util.Client, details []map[string]any, headers map[string]s
 				roots = append(roots, nestedMaps(extractPayload(payload))...)
 			}
 		}
+
+		// 3. Handout PDF (existing path)
 		if paperID := firstText(detail["paperId"], detail["paper_id"]); paperID != "" {
 			if payload, err := leduGetJSON(c, cloudlearnHost, handoutPDFPath, map[string]string{"paperId": paperID}, headers); err == nil {
 				roots = append(roots, nestedMaps(extractPayload(payload))...)
 			}
 		}
+
+		// 4. queryLessons + queryLessonDetail -- structured lesson info with video IDs
+		curriculumID := firstText(detail["curriculumId"], detail["curriculum_id"])
+		curriculumNo := firstText(detail["curriculumNo"], detail["curriculum_no"])
+		registID := firstText(detail["registId"], detail["regist_id"])
+		if classID != "" && (curriculumID != "" || liveID != "") {
+			lessons := fetchQueryLessons(c, headers, classID, curriculumID, curriculumNo, registID, stuID, puid)
+			for _, lesson := range lessons {
+				roots = append(roots, lesson)
+				// Extract scene objects from each lesson
+				if scene, ok := lesson["sceneObject"].(map[string]any); ok {
+					roots = append(roots, nestedMaps(scene)...)
+				}
+			}
+			// Also fetch detailed lesson info
+			if curriculumID != "" {
+				if detailPayload := fetchLessonDetail(c, headers, classID, curriculumID, curriculumNo, registID, stuID, puid); detailPayload != nil {
+					roots = append(roots, nestedMaps(detailPayload)...)
+				}
+			}
+		}
+
+		// 5. recordResources -- for recorded video URLs (encUrl/m3u8Url with encKey/encIv)
+		resourceID := firstText(detail["resourceId"], detail["resource_id"], detail["cloudLearnVideoResourceId"])
+		if resourceID != "" {
+			if recPayload := fetchRecordResources(c, headers, resourceID); recPayload != nil {
+				roots = append(roots, nestedMaps(recPayload)...)
+			}
+		}
+
+		// 6. courseMaterials -- downloadable files (PDFs, docs, etc.)
+		if classID != "" && (curriculumID != "" || liveID != "") {
+			materials := fetchCourseMaterials(c, headers, classID, curriculumID, curriculumNo, registID, stuID, puid)
+			for _, mat := range materials {
+				murl := firstText(mat["itemUrl"], mat["fileUrl"], mat["url"], mat["downloadUrl"], mat["resourceUrl"], mat["attachmentUrl"])
+				if murl == "" || seen[murl] {
+					continue
+				}
+				if strings.HasPrefix(murl, "//") {
+					murl = "https:" + murl
+				}
+				if !strings.HasPrefix(murl, "http") {
+					continue
+				}
+				seen[murl] = true
+				name := firstText(mat["itemName"], mat["name"], mat["title"], mat["fileName"], fmt.Sprintf("material_%03d", len(entries)+1))
+				format := mediaFormat(murl, mat)
+				stream := extractor.Stream{Quality: "best", URLs: []string{murl}, Format: format, Headers: map[string]string{"Referer": leduReferer}}
+				extra := map[string]any{"type": "material"}
+				if pid := firstText(mat["paperId"], mat["paper_id"]); pid != "" {
+					extra["paperId"] = pid
+				}
+				entries = append(entries, &extractor.MediaInfo{Site: "ledu", Title: fmt.Sprintf("(%d.%d)--%s", i+1, len(entries)+1, name), Streams: map[string]extractor.Stream{"best": stream}, Extra: extra})
+			}
+		}
+
+		// Collect video entries from all roots
 		for _, node := range nestedMaps(roots) {
 			murl := mediaURL(node)
 			if murl == "" || seen[murl] {
@@ -197,7 +278,15 @@ func buildEntries(c *util.Client, details []map[string]any, headers map[string]s
 			if format == "m3u8" {
 				stream.NeedMerge = true
 			}
-			entries = append(entries, &extractor.MediaInfo{Site: "ledu", Title: fmt.Sprintf("[%d.%d]--%s", i+1, len(entries)+1, name), Streams: map[string]extractor.Stream{"best": stream}, Extra: map[string]any{"source": firstText(node["liveId"], node["taskId"], node["paperId"], node["noteId"])}})
+			extra := map[string]any{"source": firstText(node["liveId"], node["taskId"], node["paperId"], node["noteId"])}
+			// Propagate encryption info if present
+			if encKey := firstText(node["encKey"]); encKey != "" {
+				extra["encKey"] = encKey
+			}
+			if encIv := firstText(node["encIv"]); encIv != "" {
+				extra["encIv"] = encIv
+			}
+			entries = append(entries, &extractor.MediaInfo{Site: "ledu", Title: fmt.Sprintf("[%d.%d]--%s", i+1, len(entries)+1, name), Streams: map[string]extractor.Stream{"best": stream}, Extra: extra})
 		}
 	}
 	return entries
@@ -222,6 +311,190 @@ func leduGetJSON(c *util.Client, host, path string, params map[string]string, he
 		return nil, fmt.Errorf("ledu parse %s: %w", u.String(), err)
 	}
 	return payload, nil
+}
+
+// leduPostJSON sends a JSON POST request to host+path with the given body map.
+func leduPostJSON(c *util.Client, host, path string, body map[string]any, headers map[string]string) (any, error) {
+	u := host + path
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	h := map[string]string{"Content-Type": "application/json; charset=UTF-8"}
+	for k, v := range headers {
+		h[k] = v
+	}
+	resp, err := c.Post(u, bytes.NewReader(raw), h)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("ledu POST %s: HTTP %d", u, resp.StatusCode)
+	}
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("ledu parse POST %s: %w", u, err)
+	}
+	return payload, nil
+}
+
+// ---------- structured API calls ----------
+
+// classroomInitAuth is the critical precondition for video playback. It sends
+// GET onlineAPIHost/classroom/basic/v2/init/auth?classroomMode=playback&resVer=1.1
+// and returns the initData payload containing auth tokens, course/live context.
+func classroomInitAuth(c *util.Client, headers map[string]string, liveID string) (any, error) {
+	ctx := cloneHeaders(headers)
+	if liveID != "" {
+		ctx["liveId"] = liveID
+	}
+	return leduGetJSON(c, onlineAPIHost, classroomInitAuthPath, map[string]string{
+		"classroomMode": "playback",
+		"resVer":        "1.1",
+	}, ctx)
+}
+
+// initAuthTokens extracts the token from classroomInitAuth response and returns
+// updated headers with it. Also returns the initData map for context extraction.
+func initAuthTokens(payload any) (token string, initData map[string]any) {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return "", nil
+	}
+	// The response may have {"data": {"initData": {...}}} or {"initData": {...}}
+	root := m
+	if d, ok := m["data"].(map[string]any); ok {
+		root = d
+	}
+	initData, _ = root["initData"].(map[string]any)
+	if initData == nil {
+		initData = root
+	}
+	// Extract token from response headers field or initData
+	token = firstText(m["token"], root["token"])
+	return token, initData
+}
+
+// fetchCourseMaterials calls POST cloudlearnHost/homepage/lessonDetail/queryCourseMaterialListV0303.
+// Returns material items with itemUrl/fileUrl + itemName + paperId.
+func fetchCourseMaterials(c *util.Client, headers map[string]string, classID, curriculumID, curriculumNo, registID, studentID, studentUID string) []map[string]any {
+	body := map[string]any{
+		"classId":      classID,
+		"curriculumId": curriculumID,
+		"curriculumNo": curriculumNo,
+		"registId":     registID,
+		"studentId":    studentID,
+		"studentUid":   studentUID,
+	}
+	payload, err := leduPostJSON(c, cloudlearnHost, courseMaterialsPath, body, headers)
+	if err != nil {
+		return nil
+	}
+	return extractMaterialItems(extractPayload(payload))
+}
+
+// extractMaterialItems walks the response tree to find material entries that have
+// a downloadable URL (itemUrl/fileUrl/url) and a name (itemName/paperId).
+func extractMaterialItems(v any) []map[string]any {
+	var out []map[string]any
+	seen := map[string]bool{}
+	for _, node := range nestedMaps(v) {
+		murl := firstText(node["itemUrl"], node["fileUrl"], node["url"], node["downloadUrl"], node["resourceUrl"], node["attachmentUrl"])
+		if murl == "" || !(strings.HasPrefix(murl, "http") || strings.HasPrefix(murl, "//")) {
+			continue
+		}
+		name := firstText(node["itemName"], node["name"], node["title"], node["fileName"])
+		pid := firstText(node["paperId"], node["paper_id"])
+		if name == "" && pid == "" {
+			continue
+		}
+		key := murl + "|" + name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, node)
+	}
+	return out
+}
+
+// fetchQueryLessons calls POST cloudlearnHost/homepage/lessonDetailV0812/queryLessons.
+// Returns structured lesson list with video IDs and scene objects.
+func fetchQueryLessons(c *util.Client, headers map[string]string, classID, curriculumID, curriculumNo, registID, studentID, studentUID string) []map[string]any {
+	body := map[string]any{
+		"classId":      classID,
+		"curriculumId": curriculumID,
+		"curriculumNo": curriculumNo,
+		"registId":     registID,
+		"registType":   "1",
+		"lessonType":   "",
+		"studentId":    studentID,
+		"studentUid":   studentUID,
+	}
+	payload, err := leduPostJSON(c, cloudlearnHost, queryLessonsPath, body, headers)
+	if err != nil {
+		return nil
+	}
+	return extractLessonList(extractPayload(payload))
+}
+
+// fetchLessonDetail calls POST cloudlearnHost/homepage/lessonDetailV0812/queryLessonDetail.
+// Returns detailed lesson info with scene objects containing video resources.
+func fetchLessonDetail(c *util.Client, headers map[string]string, classID, curriculumID, curriculumNo, registID, studentID, studentUID string) any {
+	body := map[string]any{
+		"classId":        classID,
+		"registClassId":  classID,
+		"curriculumId":   curriculumID,
+		"curriculumNo":   curriculumNo,
+		"registId":       registID,
+		"studentId":      studentID,
+		"studentUid":     studentUID,
+	}
+	payload, err := leduPostJSON(c, cloudlearnHost, lessonDetailPath, body, headers)
+	if err != nil {
+		return nil
+	}
+	return extractPayload(payload)
+}
+
+// extractLessonList pulls lesson dicts from the queryLessons response.
+func extractLessonList(v any) []map[string]any {
+	if arr, ok := v.([]any); ok {
+		out := make([]map[string]any, 0, len(arr))
+		for _, it := range arr {
+			if m, ok := it.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	if m, ok := v.(map[string]any); ok {
+		for _, k := range []string{"lessonList", "lessons", "list", "curriculumList"} {
+			if r := extractLessonList(m[k]); len(r) > 0 {
+				return r
+			}
+		}
+		// Single lesson object with sceneObject
+		if m["sceneObject"] != nil || m["chapterId"] != nil || m["liveType"] != nil {
+			return []map[string]any{m}
+		}
+	}
+	return nil
+}
+
+// fetchRecordResources calls GET onlineAPIHost/classroom-ai/record/v3/resources
+// to get recorded video URLs (encUrl/m3u8Url with encKey/encIv).
+func fetchRecordResources(c *util.Client, headers map[string]string, resourceID string) any {
+	params := map[string]string{}
+	if resourceID != "" {
+		params["cloudLearnVideoResourceId"] = resourceID
+	}
+	payload, err := leduGetJSON(c, onlineAPIHost, recordResourcesPath, params, headers)
+	if err != nil {
+		return nil
+	}
+	return extractPayload(payload)
 }
 
 func chooseClass(classes []map[string]any, cid string) map[string]any {

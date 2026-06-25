@@ -118,3 +118,77 @@ func pickFormat(u string) string {
 	}
 	return "mp4"
 }
+
+// materialFormat returns the file format for a material download URL.
+func materialFormat(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "bin"
+	}
+	ext := strings.TrimPrefix(strings.ToLower(path.Ext(parsed.Path)), ".")
+	if ext != "" {
+		return ext
+	}
+	return "bin"
+}
+
+// materialItem represents a downloadable courseware/material file.
+type materialItem struct {
+	URL  string
+	Name string
+}
+
+// collectMaterialItems extracts downloadable material items from a lesson's
+// study_material field. Matches the source _iter_material_items which walks
+// the material structure extracting URL/name pairs from dicts, strings,
+// and nested lists.
+func collectMaterialItems(material any, defaultName string) []materialItem {
+	if material == nil {
+		return nil
+	}
+	var items []materialItem
+	queue := []any{material}
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+		if item == nil {
+			continue
+		}
+		switch v := item.(type) {
+		case string:
+			if v != "" {
+				items = append(items, materialItem{URL: v, Name: defaultName})
+			}
+		case map[string]any:
+			// Try known URL keys in priority order.
+			u := firstNonEmpty(
+				firstString(v, "url"),
+				firstString(v, "file_url"),
+				firstString(v, "download_url"),
+				firstString(v, "material_url"),
+				firstString(v, "oss_url"),
+			)
+			if u != "" {
+				name := firstNonEmpty(
+					firstString(v, "name"),
+					firstString(v, "title"),
+					firstString(v, "file_name"),
+					defaultName,
+				)
+				items = append(items, materialItem{URL: u, Name: name})
+			}
+			// Queue nested containers for further traversal.
+			for _, sub := range v {
+				switch sub.(type) {
+				case map[string]any, []any:
+					queue = append(queue, sub)
+				}
+			}
+		case []any:
+			for _, sub := range v {
+				queue = append(queue, sub)
+			}
+		}
+	}
+	return items
+}

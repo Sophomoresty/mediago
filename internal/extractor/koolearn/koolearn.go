@@ -64,6 +64,16 @@ func (k *Koolearn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	}
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
+
+	// Discovery path: a koolearn study/my-courses URL (not a direct roombox
+	// classId) enumerates purchased courses via study.koolearn.com/my-data.
+	// Mirrors Koolearn_App._select_my_course / _get_course_list which calls
+	// _get_course_list() + _get_course_list('hide') and filters by course-type.
+	classID := parseClassID(rawURL)
+	if classID == "" {
+		return discoverMyCourses(c, opts.Cookies, rawURL)
+	}
+
 	h5Token := cookieValue(opts.Cookies, "XDF_H5_TOKEN")
 	if h5Token == "" {
 		return nil, fmt.Errorf("koolearn roombox requires XDF_H5_TOKEN cookie")
@@ -71,10 +81,6 @@ func (k *Koolearn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	roomToken, err := fetchRoomboxToken(c, h5Token)
 	if err != nil {
 		return nil, err
-	}
-	classID := parseClassID(rawURL)
-	if classID == "" {
-		return nil, fmt.Errorf("cannot parse koolearn roombox classId from URL: %s", rawURL)
 	}
 
 	lessons, err := fetchRoomboxLessons(c, classID, roomToken)
@@ -99,6 +105,119 @@ func (k *Koolearn) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		entries = append(entries, entry)
 	}
 	return &extractor.MediaInfo{Site: "koolearn", Title: "koolearn_" + classID, Entries: entries, Extra: map[string]any{"class_id": classID}}, nil
+}
+
+// courseLinkRe filters my-data course URLs by learnable course type.
+// Source: Koolearn_App._get_course_list regex
+// ((/tongyong/)|(/schedule/)|(/ky/)|(/fer/)|(/1v1/)|(/chuguo/)|(/tiny-class/)|(small-?class))
+var courseLinkRe = regexp.MustCompile(`(/tongyong/)|(/schedule/)|(/ky/)|(/fer/)|(/1v1/)|(/chuguo/)|(/tiny-class/)|(small-?class)`)
+
+// loginStatusRe matches the logged-in marker from i.koolearn.com/logininfo.
+// Source: Koolearn_Base._check_cookie ('"status"\s*:\s*0').
+var loginStatusRe = regexp.MustCompile(`"status"\s*:\s*0`)
+
+// myDataCourse models an item in the my-data `data` list.
+// Source: Koolearn_App._get_course_list reads productName/productDisplayName/url,
+// and per-item aggregatedItems[].productDisplayName/url.
+type myDataCourse struct {
+	ProductName     string `json:"productName"`
+	URL             string `json:"url"`
+	AggregatedItems []struct {
+		ProductDisplayName string `json:"productDisplayName"`
+		URL                string `json:"url"`
+	} `json:"aggregatedItems"`
+}
+
+type courseLink struct {
+	title string
+	url   string
+}
+
+// discoverMyCourses enumerates purchased/learnable courses from the user's
+// "我的课程" page. Mirrors Koolearn_App._select_my_course which combines
+// _get_course_list() and _get_course_list('hide').
+func discoverMyCourses(c *util.Client, jar http.CookieJar, rawURL string) (*extractor.MediaInfo, error) {
+	if !koolearnLogined(c) {
+		return nil, fmt.Errorf("koolearn my-courses discovery requires login cookies (i.koolearn.com status!=0)")
+	}
+	seen := make(map[string]struct{})
+	var links []courseLink
+	for _, ctype := range []string{"", "hide"} {
+		got, err := fetchCourseList(c, ctype)
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range got {
+			if _, ok := seen[l.url]; ok {
+				continue
+			}
+			seen[l.url] = struct{}{}
+			links = append(links, l)
+		}
+	}
+	if len(links) == 0 {
+		return nil, fmt.Errorf("koolearn: no learnable courses found in my-data")
+	}
+	entries := make([]*extractor.MediaInfo, 0, len(links))
+	for _, l := range links {
+		entries = append(entries, &extractor.MediaInfo{
+			Site:  "koolearn",
+			Title: l.title,
+			Extra: map[string]any{"url": l.url},
+		})
+	}
+	return &extractor.MediaInfo{Site: "koolearn", Title: "koolearn_my_courses", Entries: entries}, nil
+}
+
+// koolearnLogined checks the i.koolearn.com/logininfo status marker.
+// Source: Koolearn_Base._check_cookie (course_name == 'koolearn').
+func koolearnLogined(c *util.Client) bool {
+	body, err := c.GetString(urlLoginInfo, map[string]string{"Referer": urlHome})
+	if err != nil {
+		return false
+	}
+	return loginStatusRe.MatchString(body)
+}
+
+// fetchCourseList retrieves and filters one my-data course page.
+// Source: Koolearn_App._get_course_list(course_type).
+func fetchCourseList(c *util.Client, courseType string) ([]courseLink, error) {
+	body, err := c.GetString(fmt.Sprintf(urlMyData, url.QueryEscape(courseType)), map[string]string{"Referer": urlHome})
+	if err != nil {
+		return nil, fmt.Errorf("koolearn my-data: %w", err)
+	}
+	var out struct {
+		Data []myDataCourse `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		// JSONDecodeError -> empty data in source; treat as no courses.
+		return nil, nil
+	}
+	var links []courseLink
+	for _, item := range out.Data {
+		if len(item.AggregatedItems) > 0 {
+			for _, agg := range item.AggregatedItems {
+				links = appendCourseLink(links, agg.ProductDisplayName, agg.URL)
+			}
+		} else {
+			links = appendCourseLink(links, item.ProductName, item.URL)
+		}
+	}
+	return links, nil
+}
+
+// appendCourseLink applies the course-type filter from
+// Koolearn_App._get_course_list before appending.
+func appendCourseLink(links []courseLink, title, courseURL string) []courseLink {
+	courseURL = strings.TrimSpace(courseURL)
+	if courseURL == "" || !courseLinkRe.MatchString(courseURL) {
+		return links
+	}
+	full := courseURL
+	if strings.HasPrefix(full, "/") {
+		full = urlStudyHome + full
+	}
+	return append(links, courseLink{title: strings.TrimSpace(title), url: full})
 }
 
 func fetchRoomboxToken(c *util.Client, h5Token string) (string, error) {

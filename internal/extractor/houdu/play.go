@@ -41,6 +41,10 @@ func (x *hdCtx) getPlayURLForMode(lessonID, mode string) string {
 			}
 		}
 	default:
+		// Source: first try lessonRoomURLForPC, then fall back to liveLessonPlayParams
+		if u := tryAPI("/mini/mini/lessonRoomURLForPC"); u != "" {
+			return u
+		}
 		return tryAPI("/mini/mini/liveLessonPlayParams")
 	}
 	return ""

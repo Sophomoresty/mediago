@@ -76,7 +76,7 @@ func (s *Qihang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 	var entries []*extractor.MediaInfo
 	collectEntries(c, h, nodes, nil, uid, learnID, seen, &entries)
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("qihang: no playable videos found from courseNodes/resourceList")
+		return nil, fmt.Errorf("qihang: no downloadable entries found from courseNodes/resourceList")
 	}
 	return &extractor.MediaInfo{Site: "qihang", Title: title, Entries: entries}, nil
 }
@@ -172,19 +172,34 @@ func collectEntries(c *util.Client, h map[string]string, nodes []qNode, prefix [
 		if len(n.Children) > 0 {
 			collectEntries(c, h, n.Children, idx, uid, learnID, seen, entries)
 		}
-		if n.StudyResourceType != 2 && n.StudyResourceType != 3 || len(n.ResourceList) == 0 {
+		if len(n.ResourceList) == 0 {
 			continue
 		}
 		r := n.ResourceList[0]
-		vid, liveID := jstr(r.Vid), jstr(r.ResourceID)
-		key := vid + ":" + liveID + ":" + n.Name
-		if key == "::" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		mi := resolveVideo(c, h, idx, n.Name, vid, liveID, uid, learnID)
-		if mi != nil {
-			*entries = append(*entries, mi)
+		switch {
+		case n.StudyResourceType == 2 || n.StudyResourceType == 3:
+			// Video / live replay
+			vid, liveID := jstr(r.Vid), jstr(r.ResourceID)
+			key := vid + ":" + liveID + ":" + n.Name
+			if key == "::" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			mi := resolveVideo(c, h, idx, n.Name, vid, liveID, uid, learnID)
+			if mi != nil {
+				*entries = append(*entries, mi)
+			}
+		case n.StudyResourceType == 4:
+			// File node (PDF, PPT, DOC, attachment, etc.)
+			mi := resolveFile(idx, n.Name, r.LectureURL)
+			if mi != nil {
+				key := "file:" + r.LectureURL + ":" + n.Name
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				*entries = append(*entries, mi)
+			}
 		}
 	}
 }
@@ -235,6 +250,44 @@ func resolveLive(c *util.Client, h map[string]string, liveID, uid, learnID strin
 		return "", "", err
 	}
 	return pi.VideoURL, pi.AudioURL, nil
+}
+
+// resolveFile builds a MediaInfo for a file node (studyResourceType == 4).
+// Mirrors _parse_file_info in the source: takes lectureUrl, derives format from
+// the URL path extension, and surfaces the file as a downloadable entry.
+func resolveFile(idx []int, name, lectureURL string) *extractor.MediaInfo {
+	if lectureURL == "" {
+		return nil
+	}
+	title := sanitize(fmt.Sprintf("(%s)-%s", joinInts(idx), name))
+	// Extract file extension from the URL path (before query string), as the
+	// source does: lectureUrl.split('?')[0].rsplit('.', 1)[-1]
+	pathPart := lectureURL
+	if qIdx := strings.IndexByte(pathPart, '?'); qIdx >= 0 {
+		pathPart = pathPart[:qIdx]
+	}
+	ext := ""
+	if dotIdx := strings.LastIndexByte(pathPart, '.'); dotIdx >= 0 {
+		ext = strings.ToLower(pathPart[dotIdx+1:])
+	}
+	// Determine stream format: mp4 → video, everything else → attachment file
+	format := ext
+	if format == "" {
+		format = "bin"
+	}
+	return &extractor.MediaInfo{
+		Site:  "qihang",
+		Title: title,
+		Streams: map[string]extractor.Stream{
+			"best": {
+				Quality: "best",
+				URLs:    []string{lectureURL},
+				Format:  format,
+				Headers: map[string]string{"Referer": referer},
+			},
+		},
+		Extra: map[string]any{"type": "file", "file_fmt": ext},
+	}
 }
 
 func media(title, u string, extra map[string]any) *extractor.MediaInfo {

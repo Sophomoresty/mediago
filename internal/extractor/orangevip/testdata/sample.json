@@ -36,7 +36,21 @@
     }
   },
   "GET /web/playback/getPlayInfo": "callback({\"code\":200,\"data\":{\"playback_url\":\"https://media.example.com/orangevip/lesson.m3u8\"}});",
+  "GET /Api/Index/getUserInfo": {
+    "errno": 0,
+    "data": {
+      "uid": "12345",
+      "nickname": "Mock User"
+    }
+  },
   "POST /otm/web/student/myCourseModelFile": {
-    "files": []
+    "files": [
+      {
+        "guid": "FILE1",
+        "fileName": "Orangevip Mock Handout.pdf",
+        "netUrl": "https://media.example.com/orangevip/handout.pdf",
+        "isFolder": "0"
+      }
+    ]
   }
 }

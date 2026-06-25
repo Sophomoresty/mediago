@@ -13,6 +13,7 @@
 | Orangevip_Course.py:44 price_url = 'https://www.orangevip.com/coursedetail/{cid:}.html' | orangevip.go:23 price_url | ✓ |
 | Orangevip_Course.py:45 token_url = 'https://clapp.orangevip.com/otm/web/course/v2/reviewPlayInfo' | orangevip.go:24 token_url | ✓ |
 | Orangevip_Base.py:33 order_url = 'https://clapp.orangevip.com/otm/web/order/orderList' | orangevip.go:25 order_url | ✓ |
+| Orangevip_Base.py:233 _check_cookie url = 'https://u.api.orangevip.com/Api/Index/getUserInfo' | orangevip.go userinfo_url + checkCookie | ✓ |
 
 ## HTTP 调用
 
@@ -23,7 +24,8 @@
 | Orangevip_Course._get_token line 534 -> request_post(token_url, clientType/periodId/courseId) | fetchToken lines 159-169 | POST | ✓ |
 | Orangevip_Course._get_source_url line 561 -> request_get(video_play_url) | resolveBaijiayun lines 171-190 plus shared.BaijiayunResolvePlayback | GET | ✓ |
 | Orangevip_Course._get_live_url line 580 -> request_get(live_play_url) | resolveBaijiayun lines 178-181 via shared.BaijiayunResolveVOD | GET | ✓ |
-| Orangevip_Course._get_file_list line 775 -> request_post(file_url, courseModelId/pguid) | fetchFiles lines 192-215 | POST | ✓ |
+| Orangevip_Base._check_cookie line 228 -> request_get(getUserInfo), re.search('"errno":0') | checkCookie + errnoRe | GET | ✓ |
+| Orangevip_Course._get_file_list / _download_files line 775 -> request_post(file_url, courseModelId/pguid), folder = file_type=='1' recurse on file_id | fetchFiles (recursive) + fileFmt + fileEntries | POST | ✓ |
 
 ## JSON 字段映射
 
@@ -35,7 +37,8 @@
 | chapter.get('coursePeriodList', []) | parseLessons line 142 | ✓ |
 | lesson.get('coursePeriodTitle'), get('guid'), get('roomId'), get('videoId') | parseLessons lines 148-153 | ✓ |
 | result.get('data',{}).get('classInfo',{}).get('token') | fetchToken lines 164-168 dynamic walk on `token` | ✓ |
-| files[].get('netUrl'), get('fileName'), get('isFolder'), get('guid') | fetchFiles lines 202-212 | ✓ |
+| files[].get('netUrl'), get('fileName'), get('isFolder'), get('guid'); file_fmt from name rsplit('.',1) else netUrl split('?')[0] | fetchFiles + fileFmt | ✓ |
+| _download_one_file routes file_fmt (mp4/pdf/ppt/doc/attach) | fileEntries -> one MediaInfo entry per file with single Stream | ✓ |
 
 ## 阻塞步骤
 

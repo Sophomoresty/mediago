@@ -10,6 +10,8 @@
 | Kaoyanvip_Course.py:39-42 delivery/uuid info + outline URL | kaoyanvip.go:39-42 `urlInfo/urlInfoUUID/urlOutline/urlOutlineUUID` | ✓, `{...}` -> `%s` |
 | Kaoyanvip_Course.py:43-47 live/VOD/token URLs | kaoyanvip.go:43-47 `urlLiveRecords/urlVideoM3U8/urlVideoMP4/urlLivePlay/urlKeyToken` | ✓ |
 | Kaoyanvip_Course.py:51 timestamp URL | kaoyanvip.go:48 `urlTimestamp` | ✓ |
+| Kaoyanvip_Course.py:48 `source_url` (my_outline_resource, resource_type=material) | kaoyanvip.go `urlSource` | ✓ |
+| Kaoyanvip_Course.py:49 `file_url` (pc/material) | kaoyanvip.go `urlFile` | ✓ |
 | Kaoyanvip_Course.das `_get_live_url` constants `fjd1n2k14a` and sign template | kaoyanvip.go:49-50 `polyvLiveAppID/polyvLiveSignTmpl` | ✓ |
 
 ## HTTP 调用
@@ -23,6 +25,7 @@
 | Course `_get_video_list` das constants `video/living/video_id/classroom/record/is_live` | kaoyanvip.go:277-316 `walkKaoyan` / `parseKaoyanSection` | local parse | ✓ |
 | Course `_get_video_url` das: build `hls.videocc.net/{first10}/{last}/{vid}.m3u8`, parse `#EXT-X-STREAM-INF`, rewrite `URI` with `_get_key_token`; fallback `dpv.videocc.net` MP4 | kaoyanvip.go:345-379 and 381-394 | GET + regex | ✓ |
 | Course `_get_live_url` das: GET `living/{room_id}/records`, regex `plv_channel`, timestamp, MD5 sign, GET polyv inner API, parse `data.fileUrl/url` | kaoyanvip.go:396-423 and 425-433 | GET + regex + JSON | ✓ |
+| Course `_download_files` das: delivery `source_url` -> `data[].course_sections[].materials[]` -> `title/download_link`; `file_url` -> `data[].material_list[]` -> `name/link`; ext from URL (`split('?')` then `rsplit('.')`) | `fetchKaoyanMaterials/fetchKaoyanSourceFiles/fetchKaoyanFileList/buildKaoyanFileEntry/kaoyanFileExt` | GET + parse | ✓ (delivery only, mirrors `_is_delivery` gate) |
 
 ## JSON 字段映射
 
@@ -40,3 +43,7 @@
 ## 阻塞步骤
 
 无.
+
+## 备注
+
+源码 `Kaoyanvip_Base.download_audio` 已定义但从未被调用; `_download_video` 对 video 与 live 一律解析 polyv VOD/live URL, 返回 mp3 时即作为音频下载, Go 端由 `mediaExt` 识别 `.mp3`. 因此无独立 audio 接口需要移植.

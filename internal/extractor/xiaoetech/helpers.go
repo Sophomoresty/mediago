@@ -1,12 +1,14 @@
 package xiaoetech
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/util"
@@ -72,16 +74,13 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 	baseExtra := map[string]any{"resource_id": it.id, "resource_type": typ, "app_id": ctx.appID}
 	switch typ {
 	case "live":
-		if containsPrivateXiaoetechFlow(it.raw) {
-			return "", map[string]any{"blocked_reason": "blocked: needs private lookback decrypt", "resource_id": it.id, "resource_type": "live", "app_id": ctx.appID}
-		}
 		if u, extra := liveMediaURL(c, jar, ctx, it.id); u != "" {
 			for k, v := range extra {
 				baseExtra[k] = v
 			}
 			return u, baseExtra
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs private lookback decrypt", "resource_id": it.id, "resource_type": "live", "app_id": ctx.appID}
+		return "", map[string]any{"blocked_reason": "blocked: no playable lookback URL found for live resource", "resource_id": it.id, "resource_type": "live", "app_id": ctx.appID}
 	case "audio":
 		if u := postDetailURL(c, jar, ctx, it.id, audioURL, pcAudioURL, map[string]string{"bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": "audio", "api": audioURL}
@@ -98,19 +97,33 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 		}
 		return "", map[string]any{"blocked_reason": "blocked: needs ebook endpoint resolution", "resource_id": it.id, "resource_type": "book"}
 	case "document", "file":
-		if u := postDetailURL(c, jar, ctx, it.id, fileURL, pcFileURL, map[string]string{"bizData[resource_id]": it.id}); u != "" {
+		fileResType := firstNonEmpty(val(it.raw, "resource_type"), normType(typ))
+		if u := postDetailURL(c, jar, ctx, it.id, fileURL, pcFileURL, map[string]string{"bizData[resource_type]": fileResType, "bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": fileURL}
 		}
 		return "", map[string]any{"blocked_reason": "blocked: needs file endpoint resolution", "resource_id": it.id, "resource_type": typ}
 	case "column", "bigcolumn", "member", "ecourse", "train":
-		if u := postDetailURL(c, jar, ctx, it.id, infoURL, "", map[string]string{"bizData[resource_id]": it.id}); u != "" {
+		// Try column items endpoint first; for member type also try member-specific endpoint.
+		if u := postDetailURL(c, jar, ctx, it.id, infoURL, pcInfoURL, map[string]string{"bizData[column_id]": it.id, "bizData[page_size]": "100", "bizData[page_index]": "1", "bizData[sort]": "desc"}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": infoURL}
+		}
+		if typ == "member" {
+			if u := postDetailURL(c, jar, ctx, it.id, memberInfoURL, pcMemberInfoURL, map[string]string{"bizData[column_id]": it.id, "bizData[page_size]": "100", "bizData[page_index]": "1", "bizData[sort]": "desc"}); u != "" {
+				return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": memberInfoURL}
+			}
 		}
 		return "", map[string]any{"blocked_reason": "blocked: needs column endpoint resolution", "resource_id": it.id, "resource_type": typ}
 	}
 	if u := firstMediaURL(it.raw); u != "" {
+		// Try to decode __ba-obfuscated URLs instead of blocking.
 		if strings.Contains(strings.ToLower(u), "__ba") {
-			return "", map[string]any{"blocked_reason": "blocked: needs private lookback decrypt", "resource_id": it.id, "resource_type": typ}
+			decoded := decryptLookbackPrivateURL(u)
+			if decoded != "" && isMediaURL(normalizeURL(decoded)) {
+				baseExtra["api"] = "source"
+				baseExtra["private_decoded"] = true
+				return normalizeURL(decoded), baseExtra
+			}
+			return "", map[string]any{"blocked_reason": "blocked: failed to decode private lookback URL", "resource_id": it.id, "resource_type": typ}
 		}
 		baseExtra["api"] = "source"
 		return u, baseExtra
@@ -157,29 +170,160 @@ func videoMediaURL(c *util.Client, jar http.CookieJar, ctx xetCtx, vid string) (
 	return "", nil
 }
 
-func liveMediaURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id string) (string, map[string]any) {
-	h := headers(jar, referer(ctx))
-	urls := []string{}
-	if ctx.appID != "" {
-		urls = append(urls, fmt.Sprintf(protectedLiveURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault), ctx.appID, id), fmt.Sprintf(liveURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault), ctx.appID, id))
+// decryptLookbackPrivateURL decodes a xiaoetech __ba-obfuscated lookback URL.
+//
+// The algorithm (from Xiaoetech_Course._decrypt_lookback_private_url):
+//  1. If the URL already looks like a normal http(s) m3u8 URL, return as-is.
+//  2. Strip the "__ba" marker.
+//  3. Apply character substitution: @ -> 1, # -> 2, $ -> 3, % -> 4.
+//  4. Convert from URL-safe base64: - -> +, _ -> /.
+//  5. Strip any non-base64 characters.
+//  6. Pad with = for alignment.
+//  7. base64-decode to recover the original URL.
+func decryptLookbackPrivateURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
 	}
-	if ctx.pc && ctx.domain != "" {
-		urls = append(urls, fmt.Sprintf(pcLiveURL, ctx.domain, ctx.appID))
+	// Already a normal URL with m3u8 — nothing to decrypt.
+	if strings.HasPrefix(raw, "http") && strings.Contains(raw, ".m3u8") {
+		return raw
 	}
-	for _, api := range urls {
-		if body, err := c.GetString(api, h); err == nil {
-			var root map[string]any
-			if json.Unmarshal([]byte(body), &root) == nil {
-				if containsPrivateXiaoetechFlow(root["data"]) {
-					return "", map[string]any{"blocked_reason": "blocked: needs private lookback decrypt", "api": api}
-				}
-				if u := firstMediaURL(root["data"]); u != "" {
-					if strings.Contains(strings.ToLower(u), "__ba") {
-						return "", map[string]any{"blocked_reason": "blocked: needs private lookback decrypt", "api": api}
+	// No __ba marker — not an obfuscated URL.
+	if !strings.Contains(raw, "__ba") {
+		return raw
+	}
+
+	s := strings.ReplaceAll(raw, "__ba", "")
+
+	// Character substitution.
+	r := strings.NewReplacer("@", "1", "#", "2", "$", "3", "%", "4")
+	s = r.Replace(s)
+
+	// URL-safe base64 -> standard base64.
+	s = strings.ReplaceAll(s, "-", "+")
+	s = strings.ReplaceAll(s, "_", "/")
+
+	// Strip non-base64 characters.
+	s = regexp.MustCompile(`[^A-Za-z0-9+/]`).ReplaceAllString(s, "")
+
+	// Pad.
+	if pad := len(s) % 4; pad != 0 {
+		s += strings.Repeat("=", 4-pad)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
+}
+
+// decryptLookbackKey XORs the raw key bytes from the distribute.vod.pri.get
+// endpoint with the user ID string to derive the actual AES key.
+//
+// From Xiaoetech_Config.get_xiaoetech_key_func: each byte of key_bytes is
+// XORed with the corresponding byte of the user ID (cycling). If the result
+// is not 16, 24, or 32 bytes, it is truncated to 16.
+func decryptLookbackKey(keyBytes []byte, userID string) []byte {
+	if userID == "" || len(keyBytes) == 0 {
+		return keyBytes
+	}
+	uid := []byte(userID)
+	result := make([]byte, len(keyBytes))
+	for i, b := range keyBytes {
+		result[i] = b ^ uid[i%len(uid)]
+	}
+	switch len(result) {
+	case 16, 24, 32:
+		return result
+	default:
+		if len(result) > 16 {
+			return result[:16]
+		}
+		return result
+	}
+}
+
+// extractPrivateLookbackURLs extracts all media URLs from a protected live
+// lookback API response, decoding any __ba-obfuscated URLs.
+func extractPrivateLookbackURLs(data any) []string {
+	var urls []string
+	seen := map[string]bool{}
+	for _, m := range mapsUnder(data) {
+		for _, k := range []string{"url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url",
+			"aliveVideoUrlEncrypt", "miniAliveVideoUrl", "aliveReviewUrl", "m3u8_url", "video_url"} {
+			raw := val(m, k)
+			if raw == "" {
+				continue
+			}
+			u := decryptLookbackPrivateURL(raw)
+			u = normalizeURL(u)
+			if u == "" || !isMediaURL(u) || seen[u] {
+				continue
+			}
+			seen[u] = true
+			urls = append(urls, u)
+		}
+		// Also check nested list structures (lookback_list, etc.)
+		for _, listKey := range []string{"lookback_list", "lookbackList", "video_list",
+			"videoList", "record_list", "recordList", "list", "items"} {
+			if sub, ok := m[listKey]; ok {
+				for _, u := range extractPrivateLookbackURLs(sub) {
+					if !seen[u] {
+						seen[u] = true
+						urls = append(urls, u)
 					}
-					return u, map[string]any{"api": api}
 				}
 			}
+		}
+	}
+	return urls
+}
+
+func liveMediaURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id string) (string, map[string]any) {
+	h := headers(jar, referer(ctx))
+	apiURLs := []string{}
+	if ctx.appID != "" {
+		apiURLs = append(apiURLs,
+			fmt.Sprintf(protectedLiveURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault), ctx.appID, id),
+			fmt.Sprintf(liveURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault), ctx.appID, id),
+		)
+	}
+	if ctx.pc && ctx.domain != "" {
+		apiURLs = append(apiURLs, fmt.Sprintf(pcLiveURL, ctx.domain, ctx.appID))
+	}
+	for _, api := range apiURLs {
+		body, err := c.GetString(api, h)
+		if err != nil {
+			continue
+		}
+		var root map[string]any
+		if json.Unmarshal([]byte(body), &root) != nil {
+			continue
+		}
+		data := root["data"]
+
+		// First try to get a direct, non-obfuscated media URL.
+		if u := firstMediaURL(data); u != "" && !strings.Contains(strings.ToLower(u), "__ba") {
+			return u, map[string]any{"api": api}
+		}
+
+		// If this response contains private/protected flow data, try to
+		// decode any __ba-obfuscated URLs from it.
+		decoded := extractPrivateLookbackURLs(data)
+		for _, u := range decoded {
+			// Append time and uuid query params as the source does.
+			ts := fmt.Sprintf("%d", time.Now().UnixMilli())
+			sep := "?"
+			if strings.Contains(u, "?") {
+				sep = "&"
+			}
+			u = u + sep + "time=" + url.QueryEscape(ts)
+			if ctx.userID != "" {
+				u = u + "&uuid=" + url.QueryEscape(ctx.userID)
+			}
+			return u, map[string]any{"api": api, "private_decoded": true}
 		}
 	}
 	return "", nil
@@ -187,15 +331,18 @@ func liveMediaURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id string) (st
 
 func postDetailURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id, h5Tpl, pcTpl string, form map[string]string) string {
 	api := ""
+	actualForm := form
 	if ctx.pc && pcTpl != "" && ctx.domain != "" {
 		api = fmt.Sprintf(pcTpl, ctx.domain)
+		// PC endpoints use plain keys instead of bizData[] wrapped keys.
+		actualForm = unwrapBizData(form)
 	} else if ctx.appID != "" {
 		api = fmt.Sprintf(h5Tpl, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault))
 	}
 	if api == "" {
 		return ""
 	}
-	body, err := c.PostForm(api, form, headers(jar, referer(ctx)))
+	body, err := c.PostForm(api, actualForm, headers(jar, referer(ctx)))
 	if err != nil {
 		return ""
 	}
@@ -207,6 +354,20 @@ func postDetailURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id, h5Tpl, pc
 		return u
 	}
 	return firstURLInString(body)
+}
+
+// unwrapBizData converts h5-style "bizData[key]" form keys to plain "key" for PC endpoints.
+func unwrapBizData(form map[string]string) map[string]string {
+	out := make(map[string]string, len(form))
+	for k, v := range form {
+		if strings.HasPrefix(k, "bizData[") && strings.HasSuffix(k, "]") {
+			plain := k[len("bizData[") : len(k)-1]
+			out[plain] = v
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func itemFromMap(m map[string]any) xetItem {
@@ -254,7 +415,7 @@ func normType(t string) string {
 }
 func firstMediaURL(v any) string {
 	for _, m := range mapsUnder(v) {
-		for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "audio_m3u8_url", "audio_url", "video_audio_url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "file_url", "url", "m3u8_url", "play_url", "PlayURL"} {
+		for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "audio_m3u8_url", "audio_url", "video_audio_url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "epub_url", "file_url", "url", "m3u8_url", "play_url", "PlayURL"} {
 			if u := normalizeURL(val(m, k)); isMediaURL(u) {
 				return u
 			}
@@ -282,22 +443,6 @@ func media(title, u string, extra map[string]any) *extractor.MediaInfo {
 	return &extractor.MediaInfo{Site: "xiaoetech", Title: title, Streams: map[string]extractor.Stream{"default": stream}, Extra: extra}
 }
 
-func containsPrivateXiaoetechFlow(v any) bool {
-	for _, m := range mapsUnder(v) {
-		for _, k := range []string{"aliveVideoUrlEncrypt", "private_info", "private_m3u8"} {
-			if s := strings.ToLower(val(m, k)); s != "" && s != "0" && s != "false" && s != "<nil>" {
-				return true
-			}
-		}
-		for _, k := range []string{"url", "video_url", "aliveVideoUrl", "aliveReviewUrl", "miniAliveVideoUrl"} {
-			s := strings.ToLower(val(m, k))
-			if strings.Contains(s, "__ba") || strings.Contains(s, "distribute.vod.pri.get") {
-				return true
-			}
-		}
-	}
-	return false
-}
 func listUnder(v any, key string) []map[string]any {
 	for _, m := range mapsUnder(v) {
 		if a, ok := m[key].([]any); ok {
@@ -379,6 +524,12 @@ func formatOf(u string) string {
 	}
 	if strings.Contains(l, ".mp3") {
 		return "mp3"
+	}
+	if strings.Contains(l, ".epub") {
+		return "epub"
+	}
+	if strings.Contains(l, ".pdf") {
+		return "pdf"
 	}
 	return "mp4"
 }

@@ -483,3 +483,67 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// collectEpisodeSetIDs walks a payload tree and collects all episode set IDs
+// into the seen map, so we can avoid re-fetching sets we already have.
+func collectEpisodeSetIDs(v any, seen map[string]bool) {
+	v = unwrapData(v)
+	switch x := v.(type) {
+	case map[string]any:
+		if id := valueString(x, "episodeSetId", "episode_set_id"); id != "" {
+			seen[id] = true
+		}
+		for _, child := range x {
+			collectEpisodeSetIDs(child, seen)
+		}
+	case []any:
+		for _, child := range x {
+			collectEpisodeSetIDs(child, seen)
+		}
+	}
+}
+
+// extractSummaryEpisodeSetIDs extracts root-level episode set IDs from
+// the lecture summary's "episodeSets" array. Only returns sets that are
+// root sets (not child sets). Mirrors source _summary_episode_set_entries
+// (Fenbi_Course line 1135).
+func extractSummaryEpisodeSetIDs(v any) []string {
+	v = unwrapData(v)
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	// Look in the summary payload for episodeSets.
+	setsRaw, ok := m["episodeSets"]
+	if !ok {
+		return nil
+	}
+	setsList, ok := setsRaw.([]any)
+	if !ok {
+		return nil
+	}
+	var ids []string
+	for _, item := range setsList {
+		setMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Skip non-root sets: source checks for "root" key or parentEpisodeSetId.
+		if rootVal, hasRoot := setMap["root"]; hasRoot {
+			if rootVal == false || anyString(rootVal) == "false" || anyString(rootVal) == "0" {
+				continue
+			}
+		}
+		parentID := firstNonEmpty(anyString(setMap["parentEpisodeSetId"]), anyString(setMap["parent_episode_set_id"]))
+		if parentID != "" && parentID != "0" {
+			continue
+		}
+		setID := firstNonEmpty(
+			valueString(setMap, "episodeSetId", "episode_set_id", "setId", "set_id", "id"),
+		)
+		if setID != "" {
+			ids = append(ids, setID)
+		}
+	}
+	return ids
+}

@@ -196,6 +196,12 @@ func TestExtractMock(t *testing.T) {
 			writeFixture(t, w, fixtures, "live_url")
 		case r.Method == http.MethodGet && r.Host == "m.qlchat.com" && strings.HasPrefix(r.URL.Path, "/api/wechat/transfer/h5/channel/getDiscountType"):
 			writeFixture(t, w, fixtures, "price")
+		case r.Method == http.MethodPost && r.Host == "m.qlchat.com" && r.URL.Path == "/api/wechat/topic/getTopicSpeak":
+			_, _ = w.Write([]byte(`{"data":{"liveSpeakViews":[]}}`))
+		case r.Method == http.MethodPost && r.Host == "m.qlchat.com" && r.URL.Path == "/api/wechat/topic/pptList":
+			_, _ = w.Write([]byte(`{"data":{"files":[]}}`))
+		case r.Method == http.MethodPost && r.Host == "m.qlchat.com" && r.URL.Path == "/api/wechat/transfer/h5/article/get":
+			_, _ = w.Write([]byte(`{"data":{"content":""}}`))
 		default:
 			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
 			http.NotFound(w, r)

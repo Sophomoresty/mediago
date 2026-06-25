@@ -43,38 +43,64 @@ func (z *Zhihuishu) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 		return nil, fmt.Errorf("zhihuishu requires login cookies (use --cookies or --cookies-from-browser)")
 	}
 
+	// Route to sub-brand handlers in priority order matching the Python source's
+	// courses_re matching order: Smart > Live > Interest > School > Course.
+	// Each handler returns early if it matches; otherwise we fall through.
+
+	// 1. Smart: ai-smart-course-student-pro / smartcoursestudent / wisdomh5
+	if isSmartURL(rawURL) {
+		return extractSmart(rawURL, opts)
+	}
+
+	// 2. Live: liveId= in URL on zhihuishu.com/live
+	if isLiveURL(rawURL) {
+		return extractLive(rawURL, opts)
+	}
+
+	// 3. Interest: portals_h5/2clearning.html
+	if isInterestURL(rawURL) {
+		return extractInterest(rawURL, opts)
+	}
+
+	// 4. School: wenda / hiexam-server / studyresources hosts
+	if isSchoolURL(rawURL) {
+		return extractSchool(rawURL, opts)
+	}
+
+	// 5. Direct videoID URL (not a course page)
 	videoID := extractVideoID(rawURL)
-	if videoID == "" {
-		courseID := extractCourseHomeID(rawURL)
-		if courseID == "" {
-			return nil, fmt.Errorf("cannot parse zhihuishu URL: %s", rawURL)
+	if videoID != "" {
+		c := util.NewClient()
+		c.SetCookieJar(opts.Cookies)
+		h := zhihuishuHeaders("https://www.zhihuishu.com/")
+
+		url, err := getVideoURL(c, videoID, h)
+		if err != nil {
+			return nil, err
 		}
-		return extractCourseHomeCourse(rawURL, courseID, opts)
-	}
+		subURL, _ := getSubtitleURL(c, videoID, h)
 
-	c := util.NewClient()
-	c.SetCookieJar(opts.Cookies)
-	h := zhihuishuHeaders("https://www.zhihuishu.com/")
-
-	url, err := getVideoURL(c, videoID, h)
-	if err != nil {
-		return nil, err
-	}
-	subURL, _ := getSubtitleURL(c, videoID, h)
-
-	return &extractor.MediaInfo{
-		Site:  "zhihuishu",
-		Title: "zhihuishu_" + videoID,
-		Streams: map[string]extractor.Stream{
-			"best": {
-				Quality: "best",
-				URLs:    []string{url},
-				Format:  pickFormat(url),
-				Headers: h,
+		return &extractor.MediaInfo{
+			Site:  "zhihuishu",
+			Title: "zhihuishu_" + videoID,
+			Streams: map[string]extractor.Stream{
+				"best": {
+					Quality: "best",
+					URLs:    []string{url},
+					Format:  pickFormat(url),
+					Headers: h,
+				},
 			},
-		},
-		Subtitles: subtitleFromURL(subURL),
-	}, nil
+			Subtitles: subtitleFromURL(subURL),
+		}, nil
+	}
+
+	// 6. Course (courseHome / recruitAndCourseId / etc.)
+	courseID := extractCourseHomeID(rawURL)
+	if courseID == "" && extractRecruitAndCourseID(rawURL) == "" {
+		return nil, fmt.Errorf("cannot parse zhihuishu URL: %s", rawURL)
+	}
+	return extractCourseHomeCourse(rawURL, courseID, opts)
 }
 
 // getVideoURL implements the initVideo + changeVideoLine chain. Returns the

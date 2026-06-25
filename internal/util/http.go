@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math/rand"
@@ -129,12 +130,15 @@ func (c *Client) Get(url string, headers map[string]string) (*http.Response, err
 	return c.do("GET", url, nil, headers)
 }
 
-func (c *Client) GetBytes(url string, headers map[string]string) ([]byte, error) {
-	resp, err := c.Get(url, headers)
+func (c *Client) GetBytes(u string, headers map[string]string) ([]byte, error) {
+	resp, err := c.Get(u, headers)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, u)
+	}
 	return io.ReadAll(resp.Body)
 }
 
@@ -178,9 +182,25 @@ func (c *Client) PostForm(u string, data map[string]string, headers map[string]s
 }
 
 func (c *Client) do(method, url string, body io.Reader, headers map[string]string) (*http.Response, error) {
+	// Buffer the body so it can be replayed on retries. An io.Reader is
+	// consumed after the first http.NewRequest read, so subsequent retry
+	// iterations would send an empty body without this.
+	var buf []byte
+	if body != nil {
+		var err error
+		buf, err = io.ReadAll(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to buffer request body: %w", err)
+		}
+	}
+
 	var lastErr error
 	for i := 0; i <= c.retries; i++ {
-		req, err := http.NewRequest(method, url, body)
+		var bodyReader io.Reader
+		if buf != nil {
+			bodyReader = bytes.NewReader(buf)
+		}
+		req, err := http.NewRequest(method, url, bodyReader)
 		if err != nil {
 			return nil, err
 		}

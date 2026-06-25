@@ -35,12 +35,38 @@
               "teachUnitId": "TU1",
               "liveSource": 2,
               "liveStatus": 5,
-              "isNewLive": 1
+              "isNewLive": 1,
+              "courseDataList": [
+                {
+                  "dataId": "D1",
+                  "dataName": "课件资料.pdf",
+                  "url": "https://cdn.example.com/files/courseware1.pdf"
+                },
+                {
+                  "dataId": "D2",
+                  "dataName": "补充材料.docx",
+                  "fileUrl": "https://cdn.example.com/files/supplement.docx"
+                }
+              ]
             }
           ]
         }
       ]
     }
+  },
+  "POST /happyStudy/proxy/lexuesv/pc/getDatum": {
+    "data": [
+      {
+        "dataId": "DATUM1",
+        "dataName": "考试大纲.pdf",
+        "url": "https://cdn.example.com/datum/exam_outline.pdf"
+      },
+      {
+        "dataId": "DATUM2",
+        "dataName": "学习指南.pptx",
+        "downloadUrl": "https://cdn.example.com/datum/study_guide.pptx"
+      }
+    ]
   },
   "POST /happyStudy/livePro/getPlayUrl": {
     "data": {

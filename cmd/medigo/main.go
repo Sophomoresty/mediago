@@ -11,6 +11,7 @@ import (
 	"github.com/nichuanfang/medigo/internal/cookie"
 	"github.com/nichuanfang/medigo/internal/download"
 	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/nichuanfang/medigo/internal/util"
 
 	_ "github.com/nichuanfang/medigo/internal/extractor/ahu"
 	_ "github.com/nichuanfang/medigo/internal/extractor/aishangke"
@@ -189,10 +190,21 @@ func runMain(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
+	if proxy != "" {
+		if err := util.SetDefaultProxy(proxy); err != nil {
+			return fmt.Errorf("invalid --proxy value: %w", err)
+		}
+	}
+
+	failures := 0
 	for _, url := range args {
 		if err := processURL(url); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			failures++
 		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("%d of %d URLs failed", failures, len(args))
 	}
 	return nil
 }
@@ -267,6 +279,8 @@ func downloadOne(info *extractor.MediaInfo) error {
 		OutputDir:   outputDirFromTemplate(outFilename),
 		Overwrite:   !noOverwrites,
 		Retries:     3,
+		NoProgress:  noProgress,
+		Proxy:       proxy,
 	})
 
 	info.Title = baseFromTemplate(outFilename)

@@ -2,6 +2,7 @@ package download
 
 import (
 	"bufio"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/nichuanfang/medigo/internal/extractor"
 	"github.com/nichuanfang/medigo/internal/util"
@@ -128,7 +130,17 @@ type hlsSegment struct {
 	IV  []byte
 }
 
+const maxM3U8Depth = 3
+
 func (e *Engine) parseM3U8Segments(m3u8URL string, headers map[string]string) ([]hlsSegment, error) {
+	return e.parseM3U8SegmentsAt(m3u8URL, headers, 0)
+}
+
+func (e *Engine) parseM3U8SegmentsAt(m3u8URL string, headers map[string]string, depth int) ([]hlsSegment, error) {
+	if depth >= maxM3U8Depth {
+		return nil, fmt.Errorf("m3u8 recursion depth exceeded (%d)", maxM3U8Depth)
+	}
+
 	body, err := e.readM3U8Text(m3u8URL, headers)
 	if err != nil {
 		return nil, err
@@ -184,9 +196,54 @@ func (e *Engine) parseM3U8Segments(m3u8URL string, headers map[string]string) ([
 	}
 
 	if len(segments) == 0 {
+		if strings.Contains(body, "#EXT-X-STREAM-INF") {
+			variantURL, err := selectBestVariant(body, baseURL)
+			if err != nil {
+				return nil, err
+			}
+			return e.parseM3U8SegmentsAt(variantURL, headers, depth+1)
+		}
 		return nil, fmt.Errorf("no segments found in m3u8")
 	}
 	return segments, nil
+}
+
+// selectBestVariant parses a master playlist and returns the URL of the variant
+// with the highest BANDWIDTH.
+func selectBestVariant(body, baseURL string) (string, error) {
+	var bestBW int64
+	var bestURL string
+	inStreamInf := false
+
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			attrs := parseM3U8Attrs(strings.TrimPrefix(line, "#EXT-X-STREAM-INF:"))
+			bw, _ := strconv.ParseInt(attrs["BANDWIDTH"], 10, 64)
+			if bw >= bestBW || bestURL == "" {
+				bestBW = bw
+				inStreamInf = true
+			} else {
+				inStreamInf = false
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if inStreamInf {
+			bestURL = resolveM3U8URI(line, baseURL)
+			inStreamInf = false
+		}
+	}
+	if bestURL == "" {
+		return "", fmt.Errorf("no variant streams found in master playlist")
+	}
+	return bestURL, nil
 }
 
 func (e *Engine) readM3U8Text(raw string, headers map[string]string) (string, error) {
@@ -347,6 +404,9 @@ func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, head
 	}
 	defer os.RemoveAll(tmpDir)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sem := make(chan struct{}, e.opts.Concurrency)
 	var wg sync.WaitGroup
 	var firstErr error
@@ -358,9 +418,17 @@ func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, head
 		go func(idx int, seg hlsSegment) {
 			defer wg.Done()
 			defer func() { <-sem }()
+
+			if ctx.Err() != nil {
+				return
+			}
+
 			segPath := filepath.Join(tmpDir, fmt.Sprintf("seg_%05d", idx))
-			if err := e.downloadHLSSegment(seg, segPath, headers); err != nil {
-				errOnce.Do(func() { firstErr = err })
+			if err := e.downloadHLSSegment(ctx, seg, segPath, headers); err != nil {
+				errOnce.Do(func() {
+					firstErr = err
+					cancel()
+				})
 			}
 		}(i, seg)
 	}
@@ -376,13 +444,43 @@ func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, head
 	return os.Rename(partPath, outPath)
 }
 
-func (e *Engine) downloadHLSSegment(seg hlsSegment, outPath string, headers map[string]string) error {
+func (e *Engine) downloadHLSSegment(ctx context.Context, seg hlsSegment, outPath string, headers map[string]string) error {
+	retries := e.opts.Retries
+	if retries <= 0 {
+		retries = 3
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if ctx.Err() != nil {
+			if lastErr != nil {
+				return lastErr
+			}
+			return ctx.Err()
+		}
+		if attempt > 0 {
+			time.Sleep(time.Duration(1<<(attempt-1)) * time.Second)
+		}
+
+		if err := e.downloadHLSSegmentOnce(ctx, seg, outPath, headers); err != nil {
+			lastErr = err
+			os.Remove(outPath)
+			os.Remove(outPath + ".part")
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("HLS segment download failed after %d attempts: %w", retries+1, lastErr)
+}
+
+func (e *Engine) downloadHLSSegmentOnce(ctx context.Context, seg hlsSegment, outPath string, headers map[string]string) error {
 	var data []byte
 	var err error
 	if strings.HasPrefix(strings.ToLower(seg.URL), "data:") {
 		data, err = decodeDataURLBytes(seg.URL)
 	} else {
-		req, reqErr := http.NewRequest("GET", seg.URL, nil)
+		req, reqErr := http.NewRequestWithContext(ctx, "GET", seg.URL, nil)
 		if reqErr != nil {
 			return reqErr
 		}
@@ -461,7 +559,7 @@ func (e *Engine) downloadDASH(filename string, stream extractor.Stream) (string,
 	audioPath := filepath.Join(tmpDir, "audio.m4a")
 
 	tmpEngine := &Engine{
-		opts:   Opts{Concurrency: e.opts.Concurrency, OutputDir: tmpDir, Overwrite: true, Retries: e.opts.Retries},
+		opts:   Opts{Concurrency: e.opts.Concurrency, OutputDir: tmpDir, Overwrite: true, Retries: e.opts.Retries, NoProgress: e.opts.NoProgress},
 		ffmpeg: e.ffmpeg,
 		client: e.client,
 		http:   e.http,
