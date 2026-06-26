@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/download"
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/download"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 	"golang.org/x/term"
 )
 

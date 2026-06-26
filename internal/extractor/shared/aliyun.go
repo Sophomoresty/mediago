@@ -24,7 +24,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 var aliyunMediaTokenRe = regexp.MustCompile(`(?i)^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(.+)$`)

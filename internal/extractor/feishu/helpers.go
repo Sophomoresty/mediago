@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func extractFeishuDocTitle(body, token string) string {

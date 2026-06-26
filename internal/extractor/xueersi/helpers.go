@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func parseTarget(raw string) target {

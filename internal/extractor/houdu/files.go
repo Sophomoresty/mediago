@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func (x *hdCtx) extractSourceInfo(detail map[string]any) []hdSource {

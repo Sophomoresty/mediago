@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func TestResolutionFromQuality(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func extractCoursewareInfo(item any) map[string]any {

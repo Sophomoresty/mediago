@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 // Constants ported verbatim from Icourse163_Mooc / Icourse163_Base.

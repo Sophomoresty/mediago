@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func runFFmpeg(cmd *exec.Cmd) error {

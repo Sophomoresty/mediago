@@ -3,7 +3,7 @@ package icve
 import (
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 // TestPatternMatching verifies that each sub-module's URL patterns match the

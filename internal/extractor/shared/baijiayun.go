@@ -22,7 +22,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 const (

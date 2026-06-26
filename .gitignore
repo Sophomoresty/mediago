@@ -1,6 +1,6 @@
 # binaries
-/medigo
-/medigo.exe
+/mediago
+/mediago.exe
 *.exe
 dist/
 build/

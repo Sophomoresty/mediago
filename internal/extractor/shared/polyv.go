@@ -21,7 +21,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 // Polyv endpoints (verbatim from source).

@@ -1,4 +1,4 @@
-module github.com/nichuanfang/medigo
+module github.com/Sophomoresty/mediago
 
 go 1.25.0
 

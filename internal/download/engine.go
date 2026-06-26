@@ -16,8 +16,8 @@ import (
 
 	"github.com/schollz/progressbar/v3"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 type Opts struct {
@@ -242,7 +242,7 @@ func (e *Engine) downloadSegments(urls []string, outPath string, headers map[str
 		return err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "medigo-seg-*")
+	tmpDir, err := os.MkdirTemp("", "mediago-seg-*")
 	if err != nil {
 		return err
 	}

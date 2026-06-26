@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://linux.do"><img src="https://img.shields.io/badge/LINUX%20DO-Community-blue?style=flat-square" alt="LINUX DO Community"></a>
-  <a href="https://github.com/Sophomoresty/medigo/releases"><img src="https://img.shields.io/github/v/release/Sophomoresty/medigo?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/Sophomoresty/mediago/releases"><img src="https://img.shields.io/github/v/release/Sophomoresty/mediago?style=flat-square" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Unlicense-green?style=flat-square" alt="License"></a>
 </p>
 
@@ -29,12 +29,12 @@ Grab the latest release for your platform:
 
 ```bash
 # Linux
-curl -L https://github.com/Sophomoresty/medigo/releases/latest/download/medigo_linux_amd64.tar.gz | tar xz
-sudo mv medigo_linux_amd64 /usr/local/bin/medigo
+curl -L https://github.com/Sophomoresty/mediago/releases/latest/download/mediago_linux_amd64.tar.gz | tar xz
+sudo mv mediago_linux_amd64 /usr/local/bin/mediago
 
 # macOS (Apple Silicon)
-curl -L https://github.com/Sophomoresty/medigo/releases/latest/download/medigo_macos_arm64.tar.gz | tar xz
-sudo mv medigo_macos_arm64 /usr/local/bin/medigo
+curl -L https://github.com/Sophomoresty/mediago/releases/latest/download/mediago_macos_arm64.tar.gz | tar xz
+sudo mv mediago_macos_arm64 /usr/local/bin/mediago
 
 # Windows — download .zip from releases page
 ```
@@ -42,8 +42,8 @@ sudo mv medigo_macos_arm64 /usr/local/bin/medigo
 ### Build from source
 
 ```bash
-git clone https://github.com/Sophomoresty/medigo.git
-cd medigo && make build
+git clone https://github.com/Sophomoresty/mediago.git
+cd mediago && make build
 ```
 
 ### Optional dependencies
@@ -54,34 +54,34 @@ cd medigo && make build
 
 ```bash
 # Download a video
-medigo https://www.bilibili.com/video/BV1GJ411x7h7
+mediago https://www.bilibili.com/video/BV1GJ411x7h7
 
 # With cookies (for paid/locked content)
-medigo --cookies cookies.txt URL
+mediago --cookies cookies.txt URL
 
 # Read cookies from browser
-medigo --cookies-from-browser chrome URL
+mediago --cookies-from-browser chrome URL
 
 # List available formats
-medigo -F URL
+mediago -F URL
 
 # Dump info as JSON (no download)
-medigo -j URL
+mediago -j URL
 
 # Simulate (show info without downloading)
-medigo --simulate URL
+mediago --simulate URL
 
 # Download entire course/playlist
-medigo --yes-playlist --cookies cookies.txt URL
+mediago --yes-playlist --cookies cookies.txt URL
 
 # Custom output template
-medigo -o "%(site)s/%(title)s.%(ext)s" URL
+mediago -o "%(site)s/%(title)s.%(ext)s" URL
 
 # With proxy
-medigo --proxy socks5://127.0.0.1:1080 URL
+mediago --proxy socks5://127.0.0.1:1080 URL
 
 # Concurrent fragment downloads
-medigo -N 20 URL
+mediago -N 20 URL
 ```
 
 ## Options
@@ -138,7 +138,7 @@ Bilibili (video/cheese/gongfang/bangumi), Douyin, CCTV, Chaoxing, iCourse163 (mo
 ## Architecture
 
 ```
-medigo URL
+mediago URL
   → extractor.Match(url)           # URL pattern → select extractor
   → extractor.Extract(url, opts)   # API chain → MediaInfo
   → download.SelectBestStream()    # format selection
@@ -178,7 +178,7 @@ Pull requests welcome. Please ensure `go build ./...`, `go vet ./...`, and `go t
 - [ ] Signal handling (Ctrl-C) — clean up .part files and temp dirs
 - [ ] Retry for single-file downloads (currently only multi-segment retries)
 - [ ] Full context cancellation (m3u8 fetch + key fetch + backoff sleeps)
-- [ ] Config file support (`~/.config/medigo/config`)
+- [ ] Config file support (`~/.config/mediago/config`)
 
 ### v0.3 — Post-processing & metadata
 

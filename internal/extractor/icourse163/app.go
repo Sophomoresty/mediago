@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 // appCourse mirrors the dict produced by Icourse163_App._get_mooc_course_list

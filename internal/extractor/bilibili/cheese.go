@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 // API endpoints from decompiled Mooc/Courses/Bilibili/Bilibili_Course.pyc:

@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func (e *Engine) downloadHLS(filename string, stream extractor.Stream) (string, error) {
@@ -399,7 +399,7 @@ func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, head
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}
-	tmpDir, err := os.MkdirTemp("", "medigo-hls-*")
+	tmpDir, err := os.MkdirTemp("", "mediago-hls-*")
 	if err != nil {
 		return err
 	}
@@ -558,7 +558,7 @@ func (e *Engine) downloadDASH(filename string, stream extractor.Stream) (string,
 	}
 
 	os.MkdirAll(filepath.Dir(outPath), 0o755)
-	tmpDir, err := os.MkdirTemp("", "medigo-dash-*")
+	tmpDir, err := os.MkdirTemp("", "mediago-dash-*")
 	if err != nil {
 		return "", err
 	}

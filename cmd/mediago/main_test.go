@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 type stubPlaylistExtractor struct{}

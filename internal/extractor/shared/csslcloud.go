@@ -26,7 +26,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 // CSSL endpoints (verbatim from decompiled source — DO NOT CHANGE).

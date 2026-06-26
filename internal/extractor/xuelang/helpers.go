@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func postJSON(c *util.Client, api string, payload map[string]any, h map[string]string) (map[string]any, error) {

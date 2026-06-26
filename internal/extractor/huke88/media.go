@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func (x *huke88Ctx) mediaFromSources(srcs []hukeSource) (*extractor.MediaInfo, error) {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func fetchCourseList(c *util.Client, jar http.CookieJar) ([]xetItem, error) {

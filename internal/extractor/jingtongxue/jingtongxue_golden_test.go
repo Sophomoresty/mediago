@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func TestExtractMock(t *testing.T) {

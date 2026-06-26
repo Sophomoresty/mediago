@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func (x *hzCtx) mediaFromLessons(lessons []hzLesson, courseMaterials []hzMaterial) (*extractor.MediaInfo, error) {

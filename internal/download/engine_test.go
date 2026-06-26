@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func TestDownloadSubtitlesWritesDataURL(t *testing.T) {

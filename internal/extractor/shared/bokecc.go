@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 const BokeCCGetVideoFileURL = "https://p.bokecc.com/servlet/getvideofile"

@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor/shared"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func mashibingHeaders(cookie string) map[string]string {

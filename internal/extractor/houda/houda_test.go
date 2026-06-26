@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func TestRequestHoudaFallsBackToWrappedData(t *testing.T) {

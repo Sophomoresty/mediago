@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func (x *icoursesCtx) mediaFromResources(resources []resource) (*extractor.MediaInfo, error) {

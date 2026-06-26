@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor/shared"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
 )
 
 func (x *hdCtx) getPlayURLForMode(lessonID, mode string) string {

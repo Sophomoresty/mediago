@@ -3,8 +3,8 @@ package extractor_test
 import (
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	_ "github.com/nichuanfang/medigo/internal/extractor/bilibili"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	_ "github.com/Sophomoresty/mediago/internal/extractor/bilibili"
 )
 
 func TestMatchWithSiteReturnsSiteMetadata(t *testing.T) {

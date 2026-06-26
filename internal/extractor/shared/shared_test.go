@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nichuanfang/medigo/internal/cookie"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/cookie"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func TestCssLcloudResolvePlayInfo(t *testing.T) {

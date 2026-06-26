@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
 func (x *hyCtx) loadSources() ([]hySource, error) {

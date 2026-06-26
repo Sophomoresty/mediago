@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func luffyDecodeAliyunPlayAuth(v any) map[string]any {

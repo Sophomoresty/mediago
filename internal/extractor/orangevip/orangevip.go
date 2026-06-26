@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nichuanfang/medigo/internal/extractor"
-	"github.com/nichuanfang/medigo/internal/extractor/shared"
-	"github.com/nichuanfang/medigo/internal/util"
+	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 const (
