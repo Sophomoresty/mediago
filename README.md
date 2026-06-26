@@ -13,6 +13,12 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+<p align="center">
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/LINUX%20DO-Community-blue?style=flat-square" alt="LINUX DO Community"></a>
+  <a href="https://github.com/Sophomoresty/medigo/releases"><img src="https://img.shields.io/github/v/release/Sophomoresty/medigo?style=flat-square" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Unlicense-green?style=flat-square" alt="License"></a>
+</p>
+
 ---
 
 ## Install
