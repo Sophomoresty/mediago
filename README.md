@@ -152,6 +152,38 @@ python3 scripts/verify_source_alignment.py
 
 Pull requests welcome. Please ensure `go build ./...`, `go vet ./...`, and `go test ./...` pass before submitting.
 
+## Roadmap
+
+### v0.2 — Engine hardening
+
+- [ ] `--download-archive` — skip already-downloaded items via ID file
+- [ ] `--limit-rate` — throttle download speed
+- [ ] `--extract-audio` — post-process to mp3/m4a via ffmpeg
+- [ ] `--playlist-items` — select specific items (e.g. `1-5,8`)
+- [ ] `--verbose` / `--quiet` — log level control
+- [ ] Signal handling (Ctrl-C) — clean up .part files and temp dirs
+- [ ] Retry for single-file downloads (currently only multi-segment retries)
+- [ ] Full context cancellation (m3u8 fetch + key fetch + backoff sleeps)
+- [ ] Config file support (`~/.config/medigo/config`)
+
+### v0.3 — Post-processing & metadata
+
+- [ ] `--embed-subs` — mux subtitles into mp4/mkv
+- [ ] `--embed-thumbnail` — embed cover art
+- [ ] `--write-thumbnail` — save thumbnail separately
+- [ ] `--match-filter` — filter by title/duration/upload date
+- [ ] `--geo-bypass` — region workaround for geo-restricted content
+- [ ] Richer output template variables (`%(id)s`, `%(upload_date)s`, `%(playlist_index)s`)
+
+### v0.4 — Platform expansion
+
+- [ ] Complete courseware/material download for remaining ~11 sites
+- [ ] Douyin paid content
+- [ ] Kuaishou
+- [ ] Xiaohongshu (RedNote)
+- [ ] WeChat Channels (视频号)
+- [ ] Bilibili bangumi geo-bypass
+
 ## License
 
 [The Unlicense](LICENSE) — released into the public domain.
