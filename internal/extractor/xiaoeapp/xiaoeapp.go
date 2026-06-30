@@ -29,7 +29,10 @@ const (
 	fileListAPI        = "/xe.course.business.courseware_list.get/2.0.0"
 	ebookInfoAPI       = "/xe.course.business.ebook.info/2.0.0"
 	privateKeyAPI      = "/app/xe.vod.privatekey.get/1.0.0"
+	learnColumnAPI     = "/xe.data.learn_center.user_learn_package/1.0.0"
+	learnTrainAPI      = "/xe.course.business.e_course.user.learn.records.list/1.0.0"
 	courseListPageSize = 200
+	classroomPageSize  = 10
 	appUA              = "okhttp/3.12.0;xet-android-app 6.1.1"
 )
 
@@ -128,7 +131,9 @@ func (x *Xiaoeapp) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 func fetchCourseList(c *util.Client, sess xeSession) ([]xeItem, error) {
 	out := []xeItem{}
 	seen := map[string]bool{}
+	classrooms := []xeItem{}
 	for _, rt := range []string{"0", "4", "10", "12", "8", "50", "51", "64", "5", "6", "7", "16", "20", "25"} {
+		typeCount := 0
 		for page := 1; page <= 20; page++ {
 			root, err := postAppAPI(c, sess, courseListAPI, map[string]any{"data": map[string]any{"page_size": courseListPageSize, "page": page}, "union_id": firstNonEmpty(sess.appUserID, sess.unionID), "state": 1, "resource_type": toInt(rt), "is_recent_update": 0})
 			if err != nil {
@@ -150,17 +155,98 @@ func fetchCourseList(c *util.Client, sess xeSession) ([]xeItem, error) {
 					continue
 				}
 				seen[it.id] = true
+				typeCount++
 				out = append(out, it)
+				if firstVal(m, "resource_type", "goods_type") == "7" {
+					classrooms = append(classrooms, it)
+				}
 			}
-			if len(list) < courseListPageSize || (toInt(firstNonEmpty(val(root["data"], "total"))) > 0 && len(out) >= toInt(firstNonEmpty(val(root["data"], "total")))) {
+			if len(list) < courseListPageSize || (toInt(firstNonEmpty(val(root["data"], "total"))) > 0 && typeCount >= toInt(firstNonEmpty(val(root["data"], "total")))) {
 				break
 			}
+		}
+	}
+	for _, parent := range classrooms {
+		for _, child := range fetchClassroomChildren(c, sess, parent) {
+			if child.id == "" || seen[child.id] {
+				continue
+			}
+			seen[child.id] = true
+			out = append(out, child)
 		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("xiaoeapp course list is empty")
 	}
 	return out, nil
+}
+
+func fetchClassroomChildren(c *util.Client, sess xeSession, parent xeItem) []xeItem {
+	appID := strings.ToLower(firstNonEmpty(parent.appID, firstVal(parent.raw, "app_id", "content_app_id"), sess.appID))
+	cUserID := firstNonEmpty(parent.cUserID, firstVal(parent.raw, "c_user_id", "user_id"), sess.cUserID)
+	parentID := parent.id
+	if appID == "" || parentID == "" {
+		return nil
+	}
+	out := []xeItem{}
+	seen := map[string]bool{}
+	for _, api := range []string{learnColumnAPI, learnTrainAPI} {
+		apiCount := 0
+		for page := 1; page <= 50; page++ {
+			root := postH5JSONAPI(c, sess, h5Domain(appID), api, map[string]any{"bizData": map[string]any{"page": page, "page_size": classroomPageSize}}, appID, cUserID)
+			if code(root) != "0" {
+				break
+			}
+			data, _ := root["data"].(map[string]any)
+			list := listUnder(data, "list")
+			if len(list) == 0 {
+				break
+			}
+			for _, m := range list {
+				child := classroomChildFromMap(m, appID, cUserID, parentID)
+				if child.id == "" || seen[child.id] {
+					continue
+				}
+				seen[child.id] = true
+				apiCount++
+				out = append(out, child)
+			}
+			if truthy(firstVal(data, "is_finish", "isFinish")) || len(list) < classroomPageSize {
+				break
+			}
+			if total := toInt(firstNonEmpty(val(data, "total"))); total > 0 && apiCount >= total {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func classroomChildFromMap(m map[string]any, appID, cUserID, parentID string) xeItem {
+	rawType := firstVal(m, "resource_type", "goods_type")
+	switch rawType {
+	case "5", "6", "8", "25", "50", "64":
+	default:
+		return xeItem{}
+	}
+	if !itemAvailable(m) {
+		return xeItem{}
+	}
+	id := firstVal(m, "product_id", "course_id", "resource_id", "goods_id", "id")
+	title := firstVal(m, "title", "resource_title", "goods_title", "name", "goods_name")
+	if id == "" || title == "" {
+		return xeItem{}
+	}
+	raw := copyXiaoeMap(m)
+	raw["resource_id"] = id
+	raw["resource_type"] = rawType
+	raw["title"] = title
+	raw["app_id"] = appID
+	raw["c_user_id"] = cUserID
+	raw["user_id"] = cUserID
+	raw["parent_resource_id"] = parentID
+	raw["parent_resource_type"] = "7"
+	return xeItem{id: id, title: title, typ: typeMap(rawType), appID: appID, cUserID: cUserID, productID: firstVal(raw, "product_id", "term_id"), raw: raw}
 }
 
 func resolveItemURL(c *util.Client, sess xeSession, it xeItem) (string, map[string]any) {
@@ -174,7 +260,7 @@ func resolveItemURL(c *util.Client, sess xeSession, it xeItem) (string, map[stri
 			if u, extra := resolvePrivateXiaoeMedia(c, sess, it, it.raw, "source"); u != "" {
 				return u, extra
 			}
-			return "", map[string]any{"blocked_reason": "blocked: needs xiaoe private lookback m3u8 decrypt", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
+			return "", map[string]any{"blocked_reason": "blocked: no decodable xiaoe private lookback m3u8 candidate", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
 		}
 		if u := pickURL(it.raw); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
@@ -191,7 +277,7 @@ func resolveItemURL(c *util.Client, sess xeSession, it xeItem) (string, map[stri
 				if u, extra := resolvePrivateXiaoeMedia(c, sess, it, root["data"], lookbackURLAPI); u != "" {
 					return u, extra
 				}
-				return "", map[string]any{"blocked_reason": "blocked: needs xiaoe private lookback m3u8 decrypt", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID, "api": lookbackURLAPI}
+				return "", map[string]any{"blocked_reason": "blocked: no decodable xiaoe private lookback m3u8 candidate", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID, "api": lookbackURLAPI}
 			}
 			if u := pickURL(root["data"]); u != "" {
 				return u, map[string]any{"resource_id": it.id, "resource_type": it.typ, "app_id": it.appID, "api": lookbackURLAPI}
@@ -202,7 +288,7 @@ func resolveItemURL(c *util.Client, sess xeSession, it xeItem) (string, map[stri
 		if u, extra := resolvePrivateXiaoeMedia(c, sess, it, it.raw, "source"); u != "" {
 			return u, extra
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs xiaoe private lookback m3u8 decrypt", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
+		return "", map[string]any{"blocked_reason": "blocked: no decodable xiaoe private lookback m3u8 candidate", "resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
 	}
 	if u := pickURL(it.raw); u != "" {
 		return u, map[string]any{"resource_id": it.id, "resource_type": it.typ, "app_id": it.appID}
@@ -228,7 +314,7 @@ func resolveItemURL(c *util.Client, sess xeSession, it xeItem) (string, map[stri
 			extra["goods_type"] = goodsType
 			return u, extra
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs xiaoe private lookback m3u8 decrypt", "resource_id": it.id, "resource_type": it.typ, "goods_type": goodsType, "api": videoInfoAPI}
+		return "", map[string]any{"blocked_reason": "blocked: no decodable xiaoe private lookback m3u8 candidate", "resource_id": it.id, "resource_type": it.typ, "goods_type": goodsType, "api": videoInfoAPI}
 	}
 	if u := pickURL(data); u != "" {
 		return u, map[string]any{"resource_id": it.id, "resource_type": it.typ, "goods_type": goodsType, "api": videoInfoAPI}
@@ -531,6 +617,14 @@ func itemFromMap(m map[string]any, sess xeSession) xeItem {
 	typ := firstVal(m, "resource_type", "goods_type")
 	return xeItem{id: firstVal(m, "resource_id", "goods_id", "course_id", "id", "product_id"), title: firstVal(m, "title", "resource_title", "goods_title", "name", "goods_name"), typ: typeMap(typ), appID: firstNonEmpty(firstVal(m, "app_id", "content_app_id"), sess.appID), cUserID: firstNonEmpty(firstVal(m, "user_id", "c_user_id"), sess.cUserID), productID: firstVal(m, "product_id", "term_id"), raw: m}
 }
+
+func copyXiaoeMap(m map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
 func typeMap(t string) string {
 	if v := map[string]string{"1": "text", "2": "audio", "3": "video", "4": "live", "5": "member", "6": "column", "7": "column", "8": "bigcolumn", "10": "live", "12": "live", "16": "clock", "18": "column", "20": "book", "25": "train", "50": "ecourse", "51": "document", "64": "ecourse"}[t]; v != "" {
 		return v
@@ -566,10 +660,8 @@ func itemAvailable(m map[string]any) bool {
 }
 func pickURL(v any) string {
 	for _, m := range mapsUnder(v) {
-		for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "videoAudioUrl", "video_audio_url", "audio_m3u8_url", "audio_url", "epub_url", "aliveVideoUrl", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "play_url", "playUrl", "url", "m3u8_url", "file_url", "download_url", "downloadUrl", "material_url"} {
-			if u := normalizeURL(val(m, k)); strings.HasPrefix(u, "http") || strings.HasPrefix(u, "//") {
-				return normalizeURL(u)
-			}
+		if u := directXiaoeURL(m); u != "" {
+			return u
 		}
 	}
 	return firstURLFromEncodedFields(v)
@@ -625,6 +717,11 @@ func val(v any, k string) string {
 	}
 	return ""
 }
+func truthy(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "1" || s == "true" || s == "yes"
+}
+
 func firstVal(m map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v := val(m, k); v != "" {
@@ -760,8 +857,35 @@ func isXiaoePlayableURL(raw string) bool {
 	if strings.HasPrefix(u, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(u, "data:text/html") {
 		return true
 	}
-	if !(strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")) {
+	if !(strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")) || isXiaoePageURL(u) {
 		return false
 	}
 	return strings.Contains(u, ".m3u8") || strings.Contains(u, ".mp4") || strings.Contains(u, ".mp3") || strings.Contains(u, ".m4a") || strings.Contains(u, ".aac") || strings.Contains(u, ".pdf") || strings.Contains(u, ".epub") || strings.Contains(u, ".doc") || strings.Contains(u, ".ppt") || strings.Contains(u, ".xls") || strings.Contains(u, ".zip") || strings.Contains(u, ".rar") || strings.Contains(u, ".7z")
+}
+
+func isUsableXiaoeURL(raw string) bool {
+	u := normalizeURL(raw)
+	if !(strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "//")) {
+		return false
+	}
+	if isXiaoePageURL(u) || regexp.MustCompile(`(?i)\.(?:jpg|jpeg|png|gif|webp)(?:[?#]|$)`).MatchString(u) {
+		return false
+	}
+	return true
+}
+
+func isXiaoePageURL(raw string) bool {
+	u, err := url.Parse(normalizeURL(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.ToLower(u.EscapedPath())
+	if host == "iframe.xiaoeknow.com" && strings.HasPrefix(path, "/page/") {
+		return true
+	}
+	if !(strings.Contains(host, "xiaoeknow.com") || strings.Contains(host, "xiaoecloud.com") || strings.Contains(host, "xiaoe-tech.com") || strings.Contains(host, "xet.citv.cn")) {
+		return false
+	}
+	return strings.Contains(path, "/p/course/") || strings.Contains(path, "/p/t_pc/") || regexp.MustCompile(`(?i)/v\d+/(?:course|goods)/`).MatchString(path)
 }

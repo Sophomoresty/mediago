@@ -100,11 +100,19 @@ func (g *Gaotu) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.
 		return nil, fmt.Errorf("gaotu requires login cookies")
 	}
 	id := parseIDs(rawURL)
-	if id.Clazz == "" && id.Live == "" && id.Room == "" {
-		return nil, fmt.Errorf("cannot parse gaotu clazz/live id from URL: %s", rawURL)
-	}
 	if sid != "" && id.SID == "" {
 		id.SID = sid
+	}
+
+	if opts.ListOnly || (id.Clazz == "" && id.Live == "" && id.Room == "") {
+		courses, err := fetchGaotuCourseList(c, headers, endpoints)
+		if err != nil {
+			return nil, err
+		}
+		if len(courses) == 0 {
+			return nil, fmt.Errorf("gaotu: empty course list for %s", endpoints.apiHost)
+		}
+		return gaotuCourseListMedia(endpoints, courses), nil
 	}
 
 	if id.Live != "" || id.Room != "" {

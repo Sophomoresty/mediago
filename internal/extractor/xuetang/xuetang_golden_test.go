@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sophomoresty/mediago/internal/util"
+
 	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
@@ -164,6 +166,51 @@ func TestExtractMock(t *testing.T) {
 	}
 }
 
+func TestOnlyFilesModeSkipsPlayURLResolution(t *testing.T) {
+	var playURLCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/lms/learn/product/info"):
+			_, _ = w.Write([]byte(`{"data":{"classroom_name":"Course"}}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/learn/course/chapter"):
+			_, _ = w.Write([]byte(`{"data":{"content_data":[{"name":"Chapter","section_leaf_list":[{"name":"Lesson","leaf_list":[{"name":"Leaf","leaf_type":2,"id":11}]}]}]}}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/learn/leaf_info/"):
+			_, _ = w.Write([]byte(`{"data":{"leaf_data":{"name":"Leaf","content_info":{"media":{"ccid":"cc1"},"files":[{"name":"handout.pdf","download_url":"https://cdn.example.com/handout.pdf"}]}}}}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/service/playurl/"):
+			playURLCalled = true
+			_, _ = w.Write([]byte(`{"data":{"sources":{"quality20":["https://media.example.com/xuetang/lesson-1-hd.mp4"]}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+
+	media, err := (&Xuetang{}).Extract("https://www.xuetangx.com/course/sign123/1001", &extractor.ExtractOpts{Cookies: jar, Quality: "3"})
+	if err != nil {
+		t.Fatalf("Extract returned error in only-files mode: %v", err)
+	}
+	if playURLCalled {
+		t.Fatalf("only-files mode called playurl API")
+	}
+	if media == nil || len(media.Entries) != 1 {
+		t.Fatalf("entries = %#v, want only PDF file entry", media)
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("only-files URL = %q, want handout PDF", got)
+	}
+}
+
 func TestParseURLSourceExamples(t *testing.T) {
 	tests := []struct {
 		raw        string
@@ -242,5 +289,66 @@ func TestParseURLSourceExamples(t *testing.T) {
 				t.Fatalf("xuetangOrigin(%q) = %q, want %q", got.host, origin, tt.wantOrigin)
 			}
 		})
+	}
+}
+
+func TestFileExtFallsBackWhenMimeTypeIsMalformed(t *testing.T) {
+	if got := fileExt("https://example.com/download"); got != "bin" {
+		t.Fatalf("fileExt without extension = %q, want bin", got)
+	}
+}
+
+func TestFetchCourseChapterPayloadJoinsFreeSKU(t *testing.T) {
+	var chapterCalls int
+	var sawProductDetail bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/api/v1/lms/learn/course/chapter"):
+			chapterCalls++
+			if chapterCalls == 1 {
+				http.Error(w, "locked", http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"content_data":[{"name":"Chapter","section_leaf_list":[{"name":"Lesson","leaf_type":2,"id":42}]}]}}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/product/sku_pay_detail/"):
+			if got := r.URL.Query().Get("cid"); got != "1001" {
+				t.Fatalf("sku cid = %q, want 1001", got)
+			}
+			if got := r.URL.Query().Get("sign"); got != "sign123" {
+				t.Fatalf("sku sign = %q, want sign123", got)
+			}
+			_, _ = w.Write([]byte(`{"data":{"product_id":88,"sku_info":[{"sku_id":99,"current_price":0}]}}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/order/entries_free_sku/88/"):
+			if got := r.URL.Query().Get("sid"); got != "99" {
+				t.Fatalf("join sid = %q, want 99", got)
+			}
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case strings.Contains(r.URL.Path, "/api/v1/lms/product/get_course_detail/"):
+			sawProductDetail = true
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	c := util.NewClient()
+	root, err := fetchCourseChapterPayload(c, "https://www.xuetangx.com", map[string]string{}, "sign123", "1001")
+	if err != nil {
+		t.Fatalf("fetchCourseChapterPayload returned error: %v", err)
+	}
+	if leaves := extractCourseLeaves(root); len(leaves) != 1 || leaves[0].ID != "42" {
+		t.Fatalf("leaves = %#v, want joined chapter leaf 42", leaves)
+	}
+	if chapterCalls != 2 {
+		t.Fatalf("chapterCalls = %d, want first failure plus retry", chapterCalls)
+	}
+	if sawProductDetail {
+		t.Fatalf("product detail fallback was called before free join retry succeeded")
 	}
 }

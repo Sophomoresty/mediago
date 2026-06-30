@@ -30,7 +30,7 @@ const (
 
 func isPortalLikeURL(rawURL, page string) bool {
 	low := strings.ToLower(rawURL)
-	if strings.Contains(low, "/courseportal/portal/") || strings.Contains(low, "/course-ans/courseportal/") || strings.Contains(low, "xueyinonline.com/detail/") || strings.Contains(low, "xueyinonline.com/portal/new-header") || strings.Contains(low, "i.mooc.chaoxing.com/space/index") || strings.Contains(low, "k.chaoxing.com/res/look/index.html") {
+	if strings.Contains(low, "/courseportal/portal/") || strings.Contains(low, "/course-ans/courseportal/") || strings.Contains(low, "xueyinonline.com/detail/") || strings.Contains(low, "xueyinonline.com/portal/new-header") || strings.Contains(low, "i.mooc.chaoxing.com/space/index") || strings.Contains(low, "k.chaoxing.com/res/look/index.html") || strings.Contains(low, "/ps/") {
 		return true
 	}
 	if regexp.MustCompile(`(?i)/(?:mooc-ans/)?course/\d+\.html`).FindString(rawURL) != "" {
@@ -46,7 +46,7 @@ func (x *chaoxingContext) extractPortalParams(text string) {
 		x.courseID = firstNonEmpty(x.courseID, v)
 	}
 	if x.courseID == "" {
-		x.courseID = firstNonEmpty(x.courseID, regexpFirst(text, `(?i)(?:\?|&|&amp;)courseid=(\d+)`), regexpFirst(text, `(?i)/(?:detail|course)/(\d+)(?:\.html)?`), regexpFirst(text, `(?i)/mooc-ans/course/(\d+)\.html`))
+		x.courseID = firstNonEmpty(x.courseID, regexpFirst(text, `(?i)(?:\?|&|&amp;)courseid=(\d+)`), regexpFirst(text, `(?i)/(?:detail|course|ps)/(\d+)(?:\.html)?`), regexpFirst(text, `(?i)/mooc-ans/course/(\d+)\.html`))
 	}
 	if v := hiddenValue(text, "courseEnc"); v != "" {
 		x.portalCourseEnc = firstNonEmpty(x.portalCourseEnc, v)

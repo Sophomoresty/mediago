@@ -134,3 +134,53 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestHRefUAUsesUserAgentHeader(t *testing.T) {
+	ctx := &yzContext{headers: map[string]string{"referer": "https://shop.youzan.com"}}
+	headers := ctx.hRefUA("https://shop.youzan.com/detail", wechatMobileUA)
+
+	if headers["User-Agent"] != wechatMobileUA {
+		t.Fatalf("User-Agent header = %q, want wechat UA", headers["User-Agent"])
+	}
+	if _, ok := headers["User-ToolSearch"]; ok {
+		t.Fatalf("unexpected User-ToolSearch header present: %#v", headers)
+	}
+}
+
+func TestExtractMediaURLsIncludesQueryEncodedMedia(t *testing.T) {
+	payload := map[string]any{
+		"url": "https://cdn.example.com/play?id=1&format=m3u8",
+		"nested": []any{
+			"https:\\/\\/cdn.example.com\\/audio?id=2&type=mp4",
+		},
+	}
+
+	urls := extractMediaURLs(payload)
+	if !containsString(urls, "https://cdn.example.com/play?id=1&format=m3u8") {
+		t.Fatalf("missing format=m3u8 URL: %#v", urls)
+	}
+	if !containsString(urls, "https://cdn.example.com/audio?id=2&type=mp4") {
+		t.Fatalf("missing escaped type=mp4 URL: %#v", urls)
+	}
+}
+
+func TestPickFormatRecognizesQueryMediaHints(t *testing.T) {
+	tests := map[string]string{
+		"https://cdn.example.com/play?id=1&format=m3u8": "m3u8",
+		"https://cdn.example.com/play?id=1&type=mp4":    "mp4",
+	}
+	for raw, want := range tests {
+		if got := pickFormat(raw, ""); got != want {
+			t.Fatalf("pickFormat(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}

@@ -109,6 +109,9 @@ func AliyunPayloadFromMap(m map[string]any, raw any) AliyunPlayPayload {
 // prepares/rekeys the m3u8 text. It returns an error instead of a fabricated URL
 // when the STS material or encrypted key chain is incomplete.
 func AliyunResolvePlayInfo(c *util.Client, payload AliyunPlayPayload, videoID string, opts AliyunPlayOptions) (*AliyunPlayInfo, error) {
+	if c == nil {
+		return nil, fmt.Errorf("aliyun: nil client")
+	}
 	videoID = strings.TrimSpace(videoID)
 	if videoID == "" {
 		return nil, fmt.Errorf("aliyun: missing video id")
@@ -292,6 +295,9 @@ func firstPreferredDefinition(prefer []string) string {
 // AliyunRewriteM3U8Keys rewrites EXT-X-KEY URI values to inline hex keys after
 // resolving AliyunVoDEncryption media/challenge tokens through MTS GetLicense.
 func AliyunRewriteM3U8Keys(c *util.Client, text string, payload AliyunPlayPayload, encType, sourceURL string, opts AliyunPlayOptions) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("aliyun: nil client")
+	}
 	re := regexp.MustCompile(`URI="([^"]+)"`)
 	var firstErr error
 	keyLines := 0
@@ -368,6 +374,9 @@ func AliyunExtractKeyMaterial(content []byte) (string, string) {
 // AliyunRequestLicense signs and posts MTS GetLicense and returns the decoded
 // AES key bytes.
 func AliyunRequestLicense(c *util.Client, payload AliyunPlayPayload, mediaID, challenge, encType string, opts AliyunPlayOptions) ([]byte, error) {
+	if c == nil {
+		return nil, fmt.Errorf("aliyun: nil client")
+	}
 	if payload.AccessKeyID == "" || payload.AccessKeySecret == "" || payload.Region == "" || mediaID == "" || challenge == "" {
 		return nil, fmt.Errorf("aliyun GetLicense: incomplete payload")
 	}

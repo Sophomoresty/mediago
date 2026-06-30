@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func TestExtractMock(t *testing.T) {
@@ -92,6 +93,51 @@ func TestPlistAudioPathUsesFilePlasoTeachingHost(t *testing.T) {
 	}
 	if src.AudioURL != "https://file.plaso.cn/teaching/audio/lesson.mp3" {
 		t.Fatalf("audio URL = %q, want file.plaso.cn teaching URL", src.AudioURL)
+	}
+}
+
+func TestPlasoM3U8TextSourcesAreAbsolute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/play/master.m3u8" {
+			_, _ = w.Write([]byte(`#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="key.bin"
+#EXTINF:4,
+seg.ts
+#EXT-X-ENDLIST
+`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	sess := &plasoSession{client: util.NewClient(), eps: newPlasoEndpoints("https://www.plaso.cn/"), headers: map[string]string{}, quality: "hd"}
+	src := sess.sourceFromPlayInfo(map[string]any{"playUrls": map[string]any{"hd": server.URL + "/play/master.m3u8"}}, "play_info")
+	if src.M3U8Text == "" {
+		t.Fatalf("M3U8Text missing: %#v", src)
+	}
+	if !strings.Contains(src.M3U8Text, `URI="`+server.URL+`/play/key.bin"`) || !strings.Contains(src.M3U8Text, server.URL+"/play/seg.ts") {
+		t.Fatalf("m3u8 text not absolutized:\n%s", src.M3U8Text)
+	}
+}
+
+func TestPlasoPolyvSecureManifestRewritesKeysAndSegments(t *testing.T) {
+	routes := map[string]json.RawMessage{
+		"GET player.polyv.net/secure/abc_a.json":       json.RawMessage(`{"code":200,"data":{"playsafe":{"token":"tok"},"paths":["/p1/p2/abc_1.m3u8"],"seed_const":"5"}}`),
+		"GET hls.videocc.net/p1/p2/abc_1.m3u8":         json.RawMessage(`"#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"abc_1.key\"\n#EXTINF:4,\nseg.ts\n#EXT-X-ENDLIST\n"`),
+		"GET hls.videocc.net/playsafe/p1/p2/abc_1.key": json.RawMessage(`"0123456789abcdef"`),
+	}
+	goldenInstallTransport(t, routes)
+	sess := &plasoSession{client: util.NewClient(), eps: newPlasoEndpoints("https://www.plaso.cn/"), headers: map[string]string{}, quality: "hd"}
+	src := sess.fetchPolyvSource(fileItem{Vid: "abc", Type: "video"})
+	if src.M3U8Text == "" {
+		t.Fatalf("M3U8Text missing: %#v", src)
+	}
+	if !strings.Contains(src.M3U8Text, `URI="0x30313233343536373839616263646566"`) {
+		t.Fatalf("polyv key was not inlined:\n%s", src.M3U8Text)
+	}
+	if !strings.Contains(src.M3U8Text, "https://hls.videocc.net/p1/p2/seg.ts") {
+		t.Fatalf("polyv segments were not absolute:\n%s", src.M3U8Text)
 	}
 }
 

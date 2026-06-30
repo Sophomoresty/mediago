@@ -110,7 +110,7 @@ func cookieHeader(jar http.CookieJar) string {
 	return strings.Join(parts, "; ")
 }
 func media(title, raw string, co course, p plan) *extractor.MediaInfo {
-	return &extractor.MediaInfo{Site: "xueersi", Title: title, Streams: map[string]extractor.Stream{"default": {Quality: "default", URLs: []string{raw}, Format: "m3u8", Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"courseId": co.id, "stuCouId": co.stuCouID, "planId": p.id}}
+	return &extractor.MediaInfo{Site: "xueersi", Title: title, Streams: map[string]extractor.Stream{"default": {Quality: "default", URLs: []string{raw}, Format: "m3u8", NeedMerge: true, Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"courseId": co.id, "stuCouId": co.stuCouID, "planId": p.id}}
 }
 
 func candidates(xs ...string) []string {

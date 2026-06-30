@@ -145,3 +145,50 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestOnlyFilesModeSkipsMediaResourceAPIs(t *testing.T) {
+	var mediaAPICalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, listPath):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"list":[]}}`))
+		case strings.Contains(r.URL.Path, detailPath):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"curriculum_detail":{"title":"Course"},"lesson_list":[{"lesson_id":"11","lesson_title":"Lesson","type":"1","media_url":"https://media.example.com/lesson.mp4","study_material":[{"name":"handout.pdf","url":"https://cdn.example.com/handout.pdf"}]}]}}`))
+		case strings.Contains(r.URL.Path, statusPath):
+			_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+		case strings.Contains(r.URL.Path, lessonResourcePath), strings.Contains(r.URL.Path, liveResourcePath):
+			mediaAPICalled = true
+			_, _ = w.Write([]byte(`{"code":0,"data":{"url":"https://media.example.com/resource.mp4"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	setGoldenCookie(t, jar, "https://user.yizhiknow.com/", "Access-Token", "mock-token")
+	setGoldenCookie(t, jar, "https://curriculum-api.yizhiknow.com/", "Access-Token", "mock-token")
+
+	media, err := (&Yizhiknow{}).Extract("https://www.yizhiknow.com/course/video/1001?curriculum_id=1001", &extractor.ExtractOpts{Cookies: jar, Quality: "2"})
+	if err != nil {
+		t.Fatalf("Extract only-files returned error: %v", err)
+	}
+	if mediaAPICalled {
+		t.Fatalf("only-files mode called media resource API")
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want only material entry", len(media.Entries))
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("playable URL = %q, want material PDF", got)
+	}
+}

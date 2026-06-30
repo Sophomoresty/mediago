@@ -55,7 +55,7 @@ func extractInterestCID(u string) string {
 }
 
 // extractInterest implements the Zhihuishu_Interest flow.
-func extractInterest(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
+func extractInterest(rawURL string, opts *extractor.ExtractOpts, mode zhsMode) (*extractor.MediaInfo, error) {
 	cid := extractInterestCID(rawURL)
 	if cid == "" {
 		return nil, fmt.Errorf("cannot parse zhihuishu interest URL: %s", rawURL)
@@ -103,28 +103,30 @@ func extractInterest(rawURL string, opts *extractor.ExtractOpts) (*extractor.Med
 	}
 
 	var entries []*extractor.MediaInfo
-	for ci, chapter := range catalogResp.Rt {
-		for li, lesson := range chapter.LessonList {
-			if lesson.LessonName == "" || lesson.LessonVideoID == "" {
-				continue
-			}
-			videoName := fmt.Sprintf("[%d.%d]--%s", ci+1, li+1, sanitize(lesson.LessonName))
-			videoURL := getInterestVideoURL(c, lesson.LessonVideoID, h)
-			if videoURL == "" {
-				continue
-			}
-			entries = append(entries, &extractor.MediaInfo{
-				Site:  "zhihuishu",
-				Title: videoName,
-				Streams: map[string]extractor.Stream{
-					"default": {
-						Quality: "best",
-						URLs:    []string{videoURL},
-						Format:  pickFormat(videoURL),
-						Headers: h,
+	if !mode.onlyFiles {
+		for ci, chapter := range catalogResp.Rt {
+			for li, lesson := range chapter.LessonList {
+				if lesson.LessonName == "" || lesson.LessonVideoID == "" {
+					continue
+				}
+				videoName := fmt.Sprintf("[%d.%d]--%s", ci+1, li+1, sanitize(lesson.LessonName))
+				videoURL := getInterestVideoURL(c, lesson.LessonVideoID, h, mode)
+				if videoURL == "" {
+					continue
+				}
+				entries = append(entries, &extractor.MediaInfo{
+					Site:  "zhihuishu",
+					Title: videoName,
+					Streams: map[string]extractor.Stream{
+						"default": {
+							Quality: "best",
+							URLs:    []string{videoURL},
+							Format:  pickFormat(videoURL),
+							Headers: h,
+						},
 					},
-				},
-			})
+				})
+			}
 		}
 	}
 
@@ -146,7 +148,7 @@ func extractInterest(rawURL string, opts *extractor.ExtractOpts) (*extractor.Med
 
 // getInterestVideoURL implements Zhihuishu_Interest._get_video_url.
 // Uses initVideoToC which returns lineUrl directly in lines[].
-func getInterestVideoURL(c *util.Client, videoID string, h map[string]string) string {
+func getInterestVideoURL(c *util.Client, videoID string, h map[string]string, mode zhsMode) string {
 	body, err := c.GetString(fmt.Sprintf(urlInterestVideo, videoID), h)
 	if err != nil {
 		return ""
@@ -177,7 +179,8 @@ func getInterestVideoURL(c *util.Client, videoID string, h map[string]string) st
 	if len(urls) == 0 {
 		return ""
 	}
-	// HD = first (lowest lineID), SD = last
-	// Default to HD (mode == IS_HD == 1)
-	return urls[0]
+	if mode.hd {
+		return urls[0]
+	}
+	return urls[len(urls)-1]
 }

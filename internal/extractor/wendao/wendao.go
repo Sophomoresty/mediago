@@ -94,6 +94,7 @@ func (s *Wendao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 	if len(lessons) == 0 {
 		return nil, fmt.Errorf("wendao: course detail has no downloadable lesson URLs")
 	}
+	onlyPDF := onlyPDFMode(opts.Quality)
 	entries := []*extractor.MediaInfo{}
 	seen := map[string]bool{}
 	for i, les := range lessons {
@@ -104,6 +105,9 @@ func (s *Wendao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		seen[u] = true
 		format := lessonFormat(les, u)
 		if format == "" {
+			continue
+		}
+		if onlyPDF && isLessonMedia(les, format) {
 			continue
 		}
 		streamURL := u
@@ -444,6 +448,28 @@ func lessonFormat(lesson wdLesson, u string) string {
 		return "file"
 	default:
 		return ""
+	}
+}
+
+func onlyPDFMode(quality string) bool {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "2", "pdf", "only_pdf", "only-pdf", "file", "files":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLessonMedia(lesson wdLesson, format string) bool {
+	switch lesson.typ {
+	case 1, 2:
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "m3u8", "mp4", "m4v", "mov", "flv", "mp3", "m4a", "aac", "wav":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -190,7 +191,7 @@ func TestExtractMock(t *testing.T) {
 		case r.Host == "k.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/Course/ProductsDirectory":
 			_, _ = w.Write([]byte(`<html></html>`))
 		case r.Host == "live.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/LiveActivity/DownHandOut/":
-			_, _ = w.Write([]byte(``))
+			http.NotFound(w, r)
 		case r.Host == "p.bokecc.com" && r.Method == http.MethodGet && r.URL.Path == "/servlet/getvideofile":
 			writeFixture(t, w, fixtures, "bokecc")
 		default:
@@ -218,5 +219,115 @@ func TestExtractMock(t *testing.T) {
 	got := firstPlayableURL(info)
 	if !strings.Contains(got, "cdn.example.com/wangxiao.mp4") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
+	}
+}
+
+func TestExtractM3U8IsPreparedAsDataURL(t *testing.T) {
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Host == "k.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/play":
+			_, _ = w.Write([]byte(`<html><head><title>Wangxiao Mock Course</title></head><body><span class="course-title">Wangxiao Mock Course</span><script>var cc_vid="VID123";var siteid="SITE123";</script></body></html>`))
+		case r.Host == "k.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/Course/ProductsDirectory":
+			_, _ = w.Write([]byte(`<html></html>`))
+		case r.Host == "live.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/LiveActivity/DownHandOut/":
+			_, _ = w.Write([]byte(``))
+		case r.Host == "p.bokecc.com" && r.Method == http.MethodGet && r.URL.Path == "/servlet/getvideofile":
+			_, _ = w.Write([]byte(`<video>
+<copy><quality>30</quality><playurl>https://cdn.example.com/wangxiao/fhd.mp4</playurl></copy>
+<copy><quality>20</quality><playurl>https://cdn.example.com/wangxiao/hd.m3u8</playurl></copy>
+<copy><quality>10</quality><playurl>https://cdn.example.com/wangxiao/sd.mp4</playurl></copy>
+</video>`))
+		case r.Host == "cdn.example.com" && r.Method == http.MethodGet && r.URL.Path == "/wangxiao/hd.m3u8":
+			_, _ = w.Write([]byte(`#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="key.bin",IV=0x010203
+#EXTINF:4,
+seg.ts
+#EXT-X-ENDLIST
+`))
+		case r.Host == "cdn.example.com" && r.Method == http.MethodGet && r.URL.Path == "/wangxiao/key.bin":
+			_, _ = w.Write([]byte(`abcdefghijklmnopqrst`))
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	ext, err := extractor.Match("https://k.wangxiao.cn/play?activityid=1001&productsid=2001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ext.Extract("https://k.wangxiao.cn/play?activityid=1001&productsid=2001", &extractor.ExtractOpts{Cookies: newJar(), Quality: "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry *extractor.MediaInfo
+	for _, candidate := range info.Entries {
+		if candidate != nil && candidate.Extra["source_type"] == "m3u8_text" {
+			entry = candidate
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatalf("m3u8_text entry not found: %#v", info.Entries)
+	}
+	stream := entry.Streams["default"]
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream format/merge = %q/%v, want m3u8/true", stream.Format, stream.NeedMerge)
+	}
+	if len(stream.URLs) == 0 || !strings.HasPrefix(stream.URLs[0], "data:application/vnd.apple.mpegurl;base64,") {
+		t.Fatalf("m3u8 stream should be prepared as data URL: %#v", stream.URLs)
+	}
+	if entry.Extra["source_type"] != "m3u8_text" {
+		t.Fatalf("source_type=%#v, want m3u8_text", entry.Extra["source_type"])
+	}
+	text, _ := entry.Extra["m3u8_text"].(string)
+	if !strings.Contains(text, "https://cdn.example.com/wangxiao/seg.ts") {
+		t.Fatalf("segment URL was not absolutized: %s", text)
+	}
+	if !strings.Contains(text, "data:application/octet-stream;base64,YWJjZGVmZ2hpamtsbW5vcA==") {
+		t.Fatalf("key URI was not inlined as data URL: %s", text)
+	}
+}
+
+func TestExtractOnlyPDFSkipsBokeCCResolution(t *testing.T) {
+	var bokeHits int32
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Host == "k.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/play":
+			_, _ = w.Write([]byte(`<html><head><title>Wangxiao Mock Course</title></head><body><span class="course-title">Wangxiao Mock Course</span><script>var cc_vid="VID123";var siteid="SITE123";</script></body></html>`))
+		case r.Host == "k.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/Course/ProductsDirectory":
+			_, _ = w.Write([]byte(`<html></html>`))
+		case r.Host == "live.wangxiao.cn" && r.Method == http.MethodGet && r.URL.Path == "/LiveActivity/DownHandOut/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"url":"https://cdn.example.com/wangxiao/handout.pdf"}`))
+		case r.Host == "p.bokecc.com":
+			atomic.AddInt32(&bokeHits, 1)
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	ext, err := extractor.Match("https://k.wangxiao.cn/play?activityid=1001&productsid=2001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ext.Extract("https://k.wangxiao.cn/play?activityid=1001&productsid=2001", &extractor.ExtractOpts{Cookies: newJar(), Quality: "4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&bokeHits); got != 0 {
+		t.Fatalf("only-pdf mode should not call BokeCC, got %d calls", got)
+	}
+	if len(info.Entries) != 1 {
+		t.Fatalf("entry count=%d, want only handout", len(info.Entries))
+	}
+	stream := info.Entries[0].Streams["default"]
+	if stream.Format != "pdf" || stream.NeedMerge {
+		t.Fatalf("file stream format/merge = %q/%v, want pdf/false", stream.Format, stream.NeedMerge)
+	}
+	if got := firstPlayableURL(info); got != "https://cdn.example.com/wangxiao/handout.pdf" {
+		t.Fatalf("only-pdf URL=%q", got)
 	}
 }

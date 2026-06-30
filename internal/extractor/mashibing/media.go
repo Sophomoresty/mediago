@@ -318,10 +318,14 @@ func mashibingNormalizeMediaURL(s string) string {
 	return shared.PolyvHLSPlayBase + "/" + s
 }
 
+func mashibingM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
+}
+
 func mashibingStreamFormat(u string) string {
 	lower := strings.ToLower(u)
 	switch {
-	case strings.HasPrefix(strings.TrimSpace(u), "#extm3u") || strings.Contains(lower, ".m3u8"):
+	case strings.HasPrefix(strings.ToLower(strings.TrimSpace(u)), "#extm3u") || strings.Contains(lower, ".m3u8") || strings.HasPrefix(lower, "data:application/vnd.apple.mpegurl"):
 		return "m3u8"
 	case strings.Contains(lower, ".pdx"):
 		return "pdx"

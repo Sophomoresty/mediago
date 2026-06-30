@@ -144,3 +144,53 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestOnlyFilesModeSkipsVideoAndVideoAttachments(t *testing.T) {
+	var videoPlayCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/api/user/my-course/list-v3"):
+			_, _ = w.Write([]byte(`{"code":1,"body":{"records":[{"id":"1001","name":"Course","classScheduleId":"3001","lectureType":"video"}]}}`))
+		case strings.Contains(r.URL.Path, "/api/common/my-course-combobox"):
+			_, _ = w.Write([]byte(`{"code":1,"body":[{"id":"1001","name":"Course","classScheduleId":"3001","lectureType":"video"}]}`))
+		case strings.Contains(r.URL.Path, "/api/course/course-detail"):
+			_, _ = w.Write([]byte(`{"code":1,"body":{"id":"1001","name":"Course","classScheduleId":"3001","lectureType":"video"}}`))
+		case strings.Contains(r.URL.Path, "/api/course/period"):
+			_, _ = w.Write([]byte(`{"code":1,"body":{"periods":[{"id":"2001","name":"Lesson","periodStatus":1,"isHasVideo":true,"videoUrl":"https://media.example.com/video.m3u8","resourceUrl":[{"fileName":"handout.pdf","fileUrl":"https://cdn.example.com/handout.pdf","ext":"pdf"},{"fileName":"attached-video.mp4","fileUrl":"https://cdn.example.com/attached-video.mp4","ext":"mp4"}]}]}}`))
+		case strings.Contains(r.URL.Path, "/api/period/get-period-list"):
+			_, _ = w.Write([]byte(`{"code":1,"body":{}}`))
+		case strings.Contains(r.URL.Path, "/api/vod/period/play") || strings.Contains(r.URL.Path, "/api/vod/teach-coach/play") || strings.Contains(r.URL.Path, "/api/live/enter/play") || strings.Contains(r.URL.Path, "/getplayinfo/"):
+			videoPlayCalled = true
+			_, _ = w.Write([]byte(`{"code":1,"body":{"url":"https://media.example.com/video.m3u8"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":1,"body":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	setGoldenCookie(t, jar, "https://www.xsteach.com/", "xsteachID", "mock")
+
+	media, err := (&Xsteach{}).Extract("https://www.xsteach.com/course/detail/1001", &extractor.ExtractOpts{Cookies: jar, Quality: "4"})
+	if err != nil {
+		t.Fatalf("Extract returned error in only-files mode: %v", err)
+	}
+	if videoPlayCalled {
+		t.Fatalf("only-files mode called video playback APIs")
+	}
+	if media == nil || len(media.Entries) != 1 {
+		t.Fatalf("entries = %#v, want only PDF file entry", media)
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("only-files URL = %q, want handout PDF", got)
+	}
+}

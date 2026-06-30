@@ -43,6 +43,8 @@ const (
 	pcTextURL         = "https://%s/xe.course.business.get.detail/2.0.0"
 	ebookURL          = "https://%s%s/xe.course.business.ebook.info/2.0.0"
 	pcEbookURL        = "https://%s/xe.course.business.ebook.info/2.0.0"
+	documentInfoURL   = "https://%s%s/xe.course.business.e_course.document_info.get/1.0.0"
+	pcDocumentInfoURL = "https://%s/xe.course.business.e_course.document_info.get/1.0.0"
 	htmlVideoURL      = "https://iframe.xiaoeknow.com/api/richtext/get_video_data"
 	htmlAudioURL      = "https://iframe.xiaoeknow.com/api/richtext/get_audio_data"
 	fileURL           = "https://%s%s/xe.course.business.courseware_list.get/2.0.0"
@@ -78,8 +80,8 @@ type Xiaoetech struct{}
 func (x *Xiaoetech) Patterns() []string { return patterns }
 
 type xetCtx struct {
-	appID, xetDomain, domain, cid, typ, userID, title, referer string
-	pc                                                         bool
+	appID, xetDomain, domain, cid, typ, userID, title, referer, productID string
+	pc                                                                    bool
 }
 type xetItem struct {
 	id, title, typ, appID, userID, pageURL string
@@ -97,7 +99,7 @@ func (x *Xiaoetech) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	items := []xetItem{}
 	loginChecked := false
 	if ctx.cid != "" {
-		items = append(items, xetItem{id: ctx.cid, title: firstNonEmpty(ctx.title, ctx.cid), typ: ctx.typ, appID: ctx.appID, userID: ctx.userID, pageURL: rawURL, raw: map[string]any{"resource_id": ctx.cid, "resource_type": ctx.typ, "app_id": ctx.appID}})
+		items = append(items, xetItem{id: ctx.cid, title: firstNonEmpty(ctx.title, ctx.cid), typ: ctx.typ, appID: ctx.appID, userID: ctx.userID, pageURL: rawURL, raw: map[string]any{"resource_id": ctx.cid, "resource_type": ctx.typ, "app_id": ctx.appID, "product_id": ctx.productID}})
 	}
 	if listed, err := fetchCourseList(c, opts.Cookies); err == nil {
 		loginChecked = true
@@ -194,6 +196,9 @@ func (c xetCtx) withItem(it xetItem) xetCtx {
 	if typ := normType(it.typ); typ != "" {
 		c.typ = typ
 	}
+	if productID := firstNonEmpty(val(it.raw, "product_id"), val(it.raw, "pro_id"), val(it.raw, "course_id")); productID != "" {
+		c.productID = productID
+	}
 	if c.referer == "" {
 		c.referer = referer(c)
 	}
@@ -235,11 +240,15 @@ func parseCtx(raw string) xetCtx {
 	q := u.Query()
 	ctx.appID = strings.ToLower(firstNonEmpty(q.Get("app_id"), q.Get("appId"), ctx.appID))
 	ctx.userID = firstNonEmpty(q.Get("user_id"), q.Get("uid"))
+	ctx.productID = firstNonEmpty(q.Get("product_id"), q.Get("pro_id"), q.Get("course_id"))
 	ctx.cid = firstNonEmpty(ctx.cid, q.Get("activity_id"), q.Get("resource_id"), q.Get("product_id"), q.Get("pro_id"), q.Get("course_id"), q.Get("id"))
 	queryType := normType(firstNonEmpty(q.Get("resource_type"), q.Get("resourceType"), q.Get("course_type"), q.Get("courseType")))
 	ctx.typ = normType(ctx.typ)
 	if queryType != "" && (ctx.typ == "" || ctx.typ == "content" || ctx.typ == "goods" || ctx.typ == "detail") {
 		ctx.typ = queryType
+	}
+	if strings.HasPrefix(strings.ToLower(ctx.cid), "d_") {
+		ctx.typ = "document"
 	}
 	if ctx.typ == "" {
 		ctx.typ = typeFromResourceID(ctx.cid)
@@ -273,8 +282,10 @@ func typeFromResourceID(id string) string {
 		return "audio"
 	case strings.HasPrefix(id, "l_"):
 		return "live"
-	case strings.HasPrefix(id, "i_"), strings.HasPrefix(id, "d_"):
+	case strings.HasPrefix(id, "i_"):
 		return "text"
+	case strings.HasPrefix(id, "d_"):
+		return "document"
 	case strings.HasPrefix(id, "e_"):
 		return "book"
 	case strings.HasPrefix(id, "p_"):

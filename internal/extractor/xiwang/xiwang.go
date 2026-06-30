@@ -180,26 +180,29 @@ func (s *Xiwang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 	if p, ok := fetchPriceBrand(c, h, b, co); ok {
 		price = p
 	}
-	lessons, err := fetchLessonsBrand(c, h, b, co)
-	if err != nil {
-		return nil, err
-	}
 	entries := []*extractor.MediaInfo{}
 	seen := map[string]bool{}
-	for _, l := range lessons {
-		for _, u := range resolveLessonBrand(c, h, b, co, l) {
-			if u == "" || seen[u] {
-				continue
-			}
-			seen[u] = true
-			entries = append(entries, media(b.referer, firstNonEmpty(l.title, "plan_"+l.id), u, map[string]any{"planId": l.id, "bizId": l.bizID, "stuCouId": co.stuCouID}))
+
+	if !xiwangOnlyFilesMode(opts.Quality) {
+		lessons, err := fetchLessonsBrand(c, h, b, co)
+		if err != nil {
+			return nil, err
 		}
-		for i, p := range pptImagesBrand(c, h, b, co, l) {
-			if p == "" || seen[p] {
-				continue
+		for _, l := range lessons {
+			for _, u := range resolveLessonBrand(c, h, b, co, l) {
+				if u == "" || seen[u] {
+					continue
+				}
+				seen[u] = true
+				entries = append(entries, media(b.referer, firstNonEmpty(l.title, "plan_"+l.id), u, map[string]any{"planId": l.id, "bizId": l.bizID, "stuCouId": co.stuCouID}))
 			}
-			seen[p] = true
-			entries = append(entries, image(b.referer, fmt.Sprintf("%s_ppt_%d", firstNonEmpty(l.title, "plan_"+l.id), i+1), p, map[string]any{"planId": l.id}))
+			for i, p := range pptImagesBrand(c, h, b, co, l) {
+				if p == "" || seen[p] {
+					continue
+				}
+				seen[p] = true
+				entries = append(entries, image(b.referer, fmt.Sprintf("%s_ppt_%d", firstNonEmpty(l.title, "plan_"+l.id), i+1), p, map[string]any{"planId": l.id}))
+			}
 		}
 	}
 
@@ -220,6 +223,17 @@ func (s *Xiwang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		return nil, fmt.Errorf("xiwang: no playable m3u8/mp4, PPT, board image, or courseware URL resolved")
 	}
 	return &extractor.MediaInfo{Site: "xiwang", Title: firstNonEmpty(co.title, "xiwang_"+co.id), Entries: entries, Extra: map[string]any{"courseId": co.id, "stuCouId": co.stuCouID, "courseType": co.typ, "price": price, "purchased": true}}, nil
+}
+
+func xiwangOnlyFilesMode(quality string) bool {
+	q := strings.ToLower(strings.TrimSpace(quality))
+	q = strings.NewReplacer("-", "", "_", "", " ", "").Replace(q)
+	switch q {
+	case "2", "pdf", "onlypdf", "courseware", "material", "materials", "document", "documents", "file", "files", "课件", "资料":
+		return true
+	default:
+		return false
+	}
 }
 
 func fetchCoursesBrand(c *util.Client, h map[string]string, b *brandConfig) ([]course, error) {

@@ -127,6 +127,52 @@ func TestExtractMock(t *testing.T) {
 	}
 }
 
+func TestOnlyFilesModeSkipsCourseHomeVideoResolution(t *testing.T) {
+	var videoAPICalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/courseHome/"):
+			_, _ = w.Write([]byte(`<html><script>var courseName = "Test Course"; var schoolName = "Test School"; var termId = 100; var recruitId = 999;</script></html>`))
+		case strings.Contains(r.URL.Path, "/home/toNewInterestKeep/"):
+			http.Redirect(w, r, "https://coursehome.zhihuishu.com/home?recruitAndCourseId=crid-1", http.StatusFound)
+		case strings.Contains(r.URL.Path, "/gateway/t/v1/learning/videolist"):
+			_, _ = w.Write([]byte(`{"data":{"recruitId":999,"videoChapterDtos":[{"name":"Chapter","videoLessons":[{"name":"Lesson","videoId":12345}]}]}}`))
+		case strings.Contains(r.URL.Path, "/video/initVideo"), strings.Contains(r.URL.Path, "/video/changeVideoLine"):
+			videoAPICalled = true
+			_, _ = w.Write([]byte(`{"result":{"uuid":"uuid-1","lines":[{"lineID":2}]}}`))
+		case strings.Contains(r.URL.Path, "/home/resource/queryCourseResourceInfo"):
+			_, _ = w.Write([]byte(`[{"dataType":"file","name":"handout.pdf","url":"https://cdn.example.com/handout.pdf","id":1}]`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+
+	media, err := (&Zhihuishu{}).Extract("https://www.zhihuishu.com/courseHome/1001?ft=map", &extractor.ExtractOpts{Cookies: jar, Quality: "3"})
+	if err != nil {
+		t.Fatalf("Extract only-files returned error: %v", err)
+	}
+	if videoAPICalled {
+		t.Fatalf("only-files mode called video playback API")
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want only resource entry", len(media.Entries))
+	}
+	if got := goldenFirstPlayableURL(media); got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("first playable URL = %q, want handout PDF", got)
+	}
+}
+
 func goldenFirstPlayableURL(media *extractor.MediaInfo) string {
 	if media == nil {
 		return ""

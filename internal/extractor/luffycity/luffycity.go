@@ -372,7 +372,32 @@ func luffyBuildEntry(c *util.Client, sess *luffySession, item luffyItem) (*extra
 	for k, v := range source.Extra {
 		extra[k] = v
 	}
-	return &extractor.MediaInfo{Site: "luffycity", Title: item.Title, Streams: map[string]extractor.Stream{"default": {Quality: "default", URLs: []string{source.URL}, Format: mediaExt(source.URL), Size: source.Size, NeedMerge: mediaExt(source.URL) == "m3u8", Headers: sess.Headers}}, Extra: extra}, nil
+	headers := sess.Headers
+	if source.Headers != nil {
+		headers = source.Headers
+	}
+	format := mediaExt(source.URL)
+	if source.Type == "m3u8_text" || source.Type == "polyv_pdx" {
+		format = "m3u8"
+	}
+	streamExtra := luffyStreamExtra(source)
+	return &extractor.MediaInfo{Site: "luffycity", Title: item.Title, Streams: map[string]extractor.Stream{"default": {Quality: "default", URLs: []string{source.URL}, Format: format, Size: source.Size, NeedMerge: format == "m3u8" || format == "pdx", Headers: headers, Extra: streamExtra}}, Extra: extra}, nil
+}
+
+func luffyStreamExtra(source luffySource) map[string]any {
+	extra := map[string]any{}
+	if meta, ok := source.Extra["m3u8_meta"]; ok && meta != nil {
+		extra["m3u8_meta"] = meta
+	}
+	if cryptor, ok := source.Extra["cryptor"]; ok && cryptor != nil {
+		extra["cryptor"] = cryptor
+	} else if source.Type == "polyv_pdx" {
+		extra["cryptor"] = "polyv_pdx"
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
 }
 
 func luffyResolvePlaySource(c *util.Client, sess *luffySession, item luffyItem) (luffySource, error) {
@@ -387,12 +412,25 @@ func luffyResolvePlaySource(c *util.Client, sess *luffySession, item luffyItem) 
 	auth := mapAny(nested(play, "auth_info"))
 	if player == "POLYV" || firstText(auth["vid"], auth["video_id"], auth["videoId"]) != "" {
 		vid := firstText(auth["vid"], auth["video_id"], auth["videoId"])
-		sec, err := shared.PolyvResolveSecure(c, vid, sess.Headers)
+		polyvHeaders := luffyPolyvHeaders(sess)
+		sec, err := shared.PolyvResolveSecure(c, vid, polyvHeaders)
 		if err == nil {
 			if u, err := shared.PolyvPickBestManifest(sec); err == nil {
-				src := luffySource{URL: u, Type: "m3u8_url", Extra: map[string]any{"polyv_vid": vid}}
-				if text, err := c.GetString(u, sess.Headers); err == nil {
-					if rewritten, err := shared.PolyvRewriteM3U8Keys(c, text, sec.Data.Playsafe.Token, urlReferer); err == nil {
+				u = shared.PolyvNormalizeManifestURL(u)
+				token := firstText(auth["token"], auth["play_safe_token"], auth["playSafeToken"], auth["playsafe"], sec.PlayToken())
+				if strings.Contains(strings.ToLower(u), ".pdx") {
+					if pdx, err := shared.PolyvResolvePDX(c, shared.PolyvPDXOptions{VideoID: vid, PDXURL: u, PlaySafeToken: token, Headers: polyvHeaders, Secure: sec}); err == nil {
+						extra := map[string]any{"polyv_vid": vid, "source_type": "polyv_pdx", "m3u8_meta": pdx.M3U8Meta()}
+						for k, v := range pdx.ExtraMap() {
+							extra[k] = v
+						}
+						return luffySource{URL: luffyM3U8DataURL(pdx.M3U8Text), Type: "polyv_pdx", Headers: polyvHeaders, Extra: extra}, nil
+					}
+				}
+				src := luffySource{URL: u, Type: "m3u8_url", Headers: polyvHeaders, Extra: map[string]any{"polyv_vid": vid}}
+				if text, err := c.GetString(u, polyvHeaders); err == nil {
+					if rewritten, err := shared.PolyvRewriteM3U8KeysWithOptions(c, text, shared.PolyvRewriteOptions{Token: token, Referer: urlReferer, ManifestURL: u, SeedConst: sec.SeedConst()}); err == nil {
+						src.URL = luffyM3U8DataURL(rewritten)
 						src.Extra["m3u8_text"] = rewritten
 						src.Type = "m3u8_text"
 					}
@@ -410,6 +448,15 @@ func luffyResolvePlaySource(c *util.Client, sess *luffySession, item luffyItem) 
 		return luffySource{URL: u, Type: mediaExt(u)}, nil
 	}
 	return luffySource{}, fmt.Errorf("unsupported luffycity playback source")
+}
+
+func luffyPolyvHeaders(sess *luffySession) map[string]string {
+	return map[string]string{
+		"Accept":     "application/json, text/plain, */*",
+		"Origin":     urlOrigin,
+		"Referer":    urlReferer,
+		"User-Agent": sess.Headers["User-Agent"],
+	}
 }
 
 func luffyAPIGet(c *util.Client, path string, params map[string]string, headers map[string]string) (map[string]any, error) {

@@ -54,6 +54,9 @@ type BaijiayunPlaybackResponse struct {
 // BaijiayunResolveVOD fetches getPlayUrl for a VOD video and returns the
 // best playable URL.
 func BaijiayunResolveVOD(c *util.Client, vid, token string, headers map[string]string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("baijiayun: nil client")
+	}
 	if vid == "" {
 		return "", fmt.Errorf("baijiayun: missing vid")
 	}
@@ -75,8 +78,8 @@ func BaijiayunResolveVOD(c *util.Client, vid, token string, headers map[string]s
 	if resp.Data.URL != "" {
 		return resp.Data.URL, nil
 	}
-	if len(resp.Data.Videos) > 0 {
-		return resp.Data.Videos[0].URL, nil
+	if u, ok := pickBestBaijiayunVideo(resp.Data.Videos); ok {
+		return u, nil
 	}
 	return "", fmt.Errorf("baijiayun VOD: no playable URL")
 }
@@ -84,6 +87,9 @@ func BaijiayunResolveVOD(c *util.Client, vid, token string, headers map[string]s
 // BaijiayunResolvePlayback fetches getPlayInfo for a live replay and returns
 // the playback m3u8 URL.
 func BaijiayunResolvePlayback(c *util.Client, roomID, token string, headers map[string]string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("baijiayun: nil client")
+	}
 	if roomID == "" {
 		return "", fmt.Errorf("baijiayun: missing roomID")
 	}
@@ -102,9 +108,21 @@ func BaijiayunResolvePlayback(c *util.Client, roomID, token string, headers map[
 	return "", fmt.Errorf("baijiayun playback: no playback_url in response")
 }
 
+func pickBestBaijiayunVideo(videos []BaijiayunVideo) (string, bool) {
+	for _, video := range videos {
+		if u := strings.TrimSpace(video.URL); u != "" {
+			return u, true
+		}
+	}
+	return "", false
+}
+
 var jsonpUnwrapRe = regexp.MustCompile(`(?s)^[\w_$]*\((.*)\);?$`)
 
 func fetchAndUnwrapJSONP(c *util.Client, apiURL string, headers map[string]string) (*BaijiayunPlaybackResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("baijiayun: nil client")
+	}
 	body, err := c.GetString(apiURL, headers)
 	if err != nil {
 		return nil, fmt.Errorf("baijiayun fetch: %w", err)

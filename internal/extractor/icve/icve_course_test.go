@@ -81,8 +81,37 @@ func TestIcveCourseURLIDParsing(t *testing.T) {
 		t.Fatalf("mooc root parsed as cid=%q classCode=%q classID=%q moocRoot=%v", cid, classCode, classID, moocRoot)
 	}
 
+	for _, rawURL := range []string{
+		"https://sso.icve.com.cn/",
+		"https://sso.icve.com.cn/login?redirect=user",
+		"https://user.icve.com.cn/",
+		"https://user.icve.com.cn/learning/u/myCourse",
+	} {
+		cid, classCode, classID, moocRoot = parseCourseURLIDs(rawURL)
+		if cid != "" || classCode != "" || classID != "" || !moocRoot {
+			t.Fatalf("%s parsed as cid=%q classCode=%q classID=%q moocRoot=%v", rawURL, cid, classCode, classID, moocRoot)
+		}
+	}
+
 	if got := parseCourseCID("https://mooc-old.icve.com.cn/"); got != "" {
 		t.Fatalf("parseCourseCID(mooc root) = %q, want empty", got)
+	}
+}
+
+func TestIcveCourseLoginSubdomainPatterns(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://sso.icve.com.cn/",
+		"https://sso.icve.com.cn/api/user/userInfo?token=T1",
+		"https://user.icve.com.cn/",
+		"https://user.icve.com.cn/learning/u/myCourse",
+	} {
+		_, site, err := extractor.MatchWithSite(rawURL)
+		if err != nil {
+			t.Fatalf("MatchWithSite(%q) returned error: %v", rawURL, err)
+		}
+		if site.Name != "IcveCourse" {
+			t.Fatalf("MatchWithSite(%q) site = %q, want IcveCourse", rawURL, site.Name)
+		}
 	}
 }
 
@@ -105,7 +134,10 @@ func TestIcveCourseGetCourseListUsesMoocOldAndUserSubdomains(t *testing.T) {
 			}
 			switch r.Form.Get("curPage") {
 			case "1":
-				writeJSON(t, w, map[string]any{"data": []any{[]any{"CourseA", "", "", "", "", "", "CID_A", "", "SchoolA"}}})
+				writeJSON(t, w, map[string]any{"data": []any{
+					[]any{"NoIDCourse", "", "", "", "", "", "", "", "NoIDSchool"},
+					[]any{"CourseA", "", "", "", "", "", "CID_A", "", "SchoolA"},
+				}})
 			case "2":
 				writeJSON(t, w, map[string]any{"data": []any{}})
 			default:
@@ -121,7 +153,10 @@ func TestIcveCourseGetCourseListUsesMoocOldAndUserSubdomains(t *testing.T) {
 			if got := r.Form.Get("page.curPage"); got != "1" {
 				t.Fatalf("user curPage = %q", got)
 			}
-			writeJSON(t, w, map[string]any{"page": map[string]any{"items": []any{map[string]any{"info": []any{map[string]any{"ext9": "CID_B", "ext1": "CourseB"}}}}}})
+			writeJSON(t, w, map[string]any{"page": map[string]any{"items": []any{map[string]any{"info": []any{
+				map[string]any{"ext9": "", "ext1": "NoIDUserCourse"},
+				map[string]any{"ext9": "CID_B", "ext1": "CourseB"},
+			}}}}})
 		default:
 			http.Error(w, "unexpected mock request", http.StatusNotFound)
 			t.Fatalf("unexpected mock request: method=%s host=%s path=%s", r.Method, r.Host, r.URL.Path)
@@ -139,6 +174,87 @@ func TestIcveCourseGetCourseListUsesMoocOldAndUserSubdomains(t *testing.T) {
 	}
 	if courses[1] != (courseListItem{CourseID: "CID_B", Title: "CourseB"}) {
 		t.Fatalf("user course = %#v", courses[1])
+	}
+}
+
+func TestIcveCourseExtractFromLoginRootsUsesUserCourseList(t *testing.T) {
+	jar := newTestCookieJar(t, "https://sso.icve.com.cn/", []*http.Cookie{
+		{Name: "token", Value: "T1"},
+		{Name: "UNTYXLCOOKIE", Value: "U1"},
+	})
+
+	installMockHTTPSTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Host == "sso.icve.com.cn" && r.Method == http.MethodPost && r.URL.Path == "/api/user/userInfo":
+			if got := r.URL.Query().Get("token"); got != "T1" {
+				t.Fatalf("sso token = %q, want T1", got)
+			}
+			if cookie := r.Header.Get("Cookie"); !strings.Contains(cookie, "UNTYXLCOOKIE=U1") {
+				t.Fatalf("sso cookie %q missing UNTYXLCOOKIE", cookie)
+			}
+			writeJSON(t, w, map[string]any{"code": 200, "msg": "ok"})
+		case r.Host == "zjy2.icve.com.cn" && r.Method == http.MethodGet && r.URL.Path == "/prod-api/auth/passLogin":
+			if got := r.URL.Query().Get("token"); got != "T1" {
+				t.Fatalf("passLogin token = %q, want T1", got)
+			}
+			writeJSON(t, w, map[string]any{"data": map[string]any{"access_token": "A1"}})
+		case r.Host == "zjy2.icve.com.cn" && r.Method == http.MethodGet && r.URL.Path == "/prod-api/system/user/getInfo":
+			if got := r.Header.Get("Authorization"); got != "Bearer A1" {
+				t.Fatalf("Authorization = %q, want Bearer A1", got)
+			}
+			writeJSON(t, w, map[string]any{"code": 200})
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/islogin.action"):
+			_, _ = w.Write([]byte("token:'TOKEN2';siteCode:'SITE';loginId:'LOGIN';"))
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/studentMooc_selectMoocCourse.action"):
+			assertFormValue(t, r, "token", "TOKEN2")
+			assertFormValue(t, r, "curPage", "1")
+			writeJSON(t, w, map[string]any{"data": []any{}})
+		case r.Host == "user.icve.com.cn" && r.Method == http.MethodPost && r.URL.Path == "/learning/u/userDefinedSql/getBySqlCode.json":
+			assertFormValue(t, r, "page.searchItem.queryId", "getNewStuCourseInfoById")
+			writeJSON(t, w, map[string]any{"page": map[string]any{"items": []any{map[string]any{"info": []any{map[string]any{"ext9": "CIDUSER", "ext1": "用户课程"}}}}}})
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/portalMooc_addCourseFormStudent.action"):
+			assertFormValue(t, r, "courseId", "CIDUSER")
+			assertFormValue(t, r, "token", "TOKEN2")
+			_, _ = w.Write([]byte(`{"errorCode":"200"}`))
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/portalMooc_selectCourseDetails.action"):
+			assertFormValue(t, r, "courseId", "CIDUSER")
+			writeJSON(t, w, map[string]any{"data": map[string]any{"className": "用户课程", "schoolName": "示例校", "startTime": "2000-01-01 00:00:00"}, "courseData": []any{}})
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/dataCheck.action"):
+			assertFormValue(t, r, "courseId", "CIDUSER")
+			writeJSON(t, w, map[string]any{"data": "learn-url"})
+		case r.Host == "mooc-old.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/portalMooc_getCourseOutline.action"):
+			writeJSON(t, w, map[string]any{"data": []any{map[string]any{"title": "章一", "childItem": []any{map[string]any{"title": "节一", "childItem": []any{map[string]any{"id": "VIDUSER", "title": "用户视频.mp4", "type": "video", "resource": "media/user.mp4"}}}}}}})
+		case r.Host == "course.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/courseware_index.action"):
+			_, _ = w.Write([]byte(""))
+		case r.Host == "course.icve.com.cn" && strings.HasSuffix(r.URL.Path, "/content_video.action"):
+			if got := r.URL.Query().Get("params.courseId"); got != "CIDUSER" {
+				t.Fatalf("content courseId = %q, want CIDUSER", got)
+			}
+			if got := r.URL.Query().Get("params.itemId"); got != "VIDUSER" {
+				t.Fatalf("content itemId = %q, want VIDUSER", got)
+			}
+			_, _ = w.Write([]byte(`{"HD":"https://cdn.example.com/user-video-hd.mp4"}`))
+		default:
+			http.Error(w, "unexpected mock request", http.StatusNotFound)
+			t.Fatalf("unexpected mock request: method=%s host=%s path=%s rawQuery=%s", r.Method, r.Host, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+
+	for _, rawURL := range []string{
+		"https://sso.icve.com.cn/",
+		"https://user.icve.com.cn/learning/u/myCourse",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			info, err := (&IcveCourse{}).Extract(rawURL, &extractor.ExtractOpts{Cookies: jar, Quality: "hd"})
+			if err != nil {
+				t.Fatalf("Extract returned error: %v", err)
+			}
+			urls := collectMediaURLs(info)
+			if !containsString(urls, "https://cdn.example.com/user-video-hd.mp4") {
+				t.Fatalf("resolved URLs missing user-course video: %#v", urls)
+			}
+		})
 	}
 }
 

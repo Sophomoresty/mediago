@@ -288,3 +288,17 @@ func TestNormalizeStorageExpandsSmarteduCDNNodes(t *testing.T) {
 		})
 	}
 }
+
+func TestStrPreservesNumericIDsEndingInZero(t *testing.T) {
+	cases := map[any]string{
+		float64(10):   "10",
+		float64(1000): "1000",
+		float64(1200): "1200",
+		float64(10.5): "10.5",
+	}
+	for input, want := range cases {
+		if got := str(input); got != want {
+			t.Fatalf("str(%v) = %q, want %q", input, got, want)
+		}
+	}
+}

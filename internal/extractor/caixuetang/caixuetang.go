@@ -87,9 +87,9 @@ func (s *Caixuetang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extra
 }
 
 func parseIDs(raw string) (cid, videoID, courseType string) {
-	u, _ := url.Parse(raw)
+	u, err := url.Parse(raw)
 	qs := url.Values{}
-	if u != nil {
+	if err == nil && u != nil {
 		for k, vs := range u.Query() {
 			for _, v := range vs {
 				qs.Add(k, v)
@@ -127,7 +127,10 @@ func parseIDs(raw string) (cid, videoID, courseType string) {
 func authFromJar(jar http.CookieJar) authState {
 	var cookies []*http.Cookie
 	for _, raw := range []string{"https://www.caixuetang.cn/", "https://service.agent.pro.caixuetang.cn/"} {
-		u, _ := url.Parse(raw)
+		u, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
 		cookies = append(cookies, jar.Cookies(u)...)
 	}
 	parts, a := []string{}, authState{}

@@ -47,6 +47,10 @@ const (
 	urlPolyvKey    = "https://hls.videocc.net/playsafe/%s/%s/%s_%s.key?token=%s"
 	signSecret     = "RZRRNN9RXYCP"
 	sidPrefix      = "study"
+	modeFHD        = 1
+	modeHD         = 2
+	modeSD         = 3
+	modeOnlyPDF    = 4
 )
 
 var (
@@ -124,6 +128,7 @@ func (w *Wangxiao233) Extract(rawURL string, opts *extractor.ExtractOpts) (*extr
 	if len(children) == 0 {
 		children = []wx233Course{course}
 	}
+	mode := selectMode(opts.Quality)
 	entries := []*extractor.MediaInfo{}
 	seen := map[string]bool{}
 	for _, child := range children {
@@ -135,18 +140,23 @@ func (w *Wangxiao233) Extract(rawURL string, opts *extractor.ExtractOpts) (*extr
 		if !course.purchased && purchasedFromAny(chapterData) {
 			course.purchased = true
 		}
-		for _, v := range collectVideos(chapterData) {
-			mi, err := resolveVideo(c, sess, v, opts)
-			if err != nil || mi == nil || len(mi.Streams) == 0 {
-				continue
-			}
-			u := firstStreamURL(mi)
-			if u != "" && !seen[u] {
-				seen[u] = true
-				entries = append(entries, mi)
+		if mode != modeOnlyPDF {
+			for _, v := range collectVideos(chapterData) {
+				mi, err := resolveVideo(c, sess, v, opts)
+				if err != nil || mi == nil || len(mi.Streams) == 0 {
+					continue
+				}
+				u := firstStreamURL(mi)
+				if u != "" && !seen[u] {
+					seen[u] = true
+					entries = append(entries, mi)
+				}
 			}
 		}
 		for _, f := range collectLectureFiles(chapterData, child, course) {
+			if skipFileForMode(f, mode) {
+				continue
+			}
 			mi, err := resolveFile(c, sess, f, course)
 			if err != nil || mi == nil || len(mi.Streams) == 0 {
 				continue
@@ -159,6 +169,9 @@ func (w *Wangxiao233) Extract(rawURL string, opts *extractor.ExtractOpts) (*extr
 		}
 	}
 	for _, f := range collectDatumFiles(c, sess, course, tagData) {
+		if skipFileForMode(f, mode) {
+			continue
+		}
 		mi, err := resolveFile(c, sess, f, course)
 		if err != nil || mi == nil || len(mi.Streams) == 0 {
 			continue
@@ -580,14 +593,17 @@ func resolveAliyun(c *util.Client, sess wx233Session, v wx233Video, opts *extrac
 	extra := map[string]any{"aliyun_vid": v.aliyunVid, "detail_id": v.detailID, "aliyun_api": info.APIURL, "source_type": info.SourceType}
 	if info.M3U8Text != "" {
 		extra["m3u8_text"] = info.M3U8Text
+		extra["m3u8_url"] = info.URL
 	}
 	return media(v.title, info.URL, info.Format, extra), nil
 }
 func resolvePolyv(c *util.Client, v wx233Video) (*extractor.MediaInfo, error) {
+	var tokenPayload map[string]any
 	if tokenBody, err := c.GetString(urlPolyvToken+"?videoid="+url.QueryEscape(v.polyVid), map[string]string{"Referer": refererURL}); err == nil {
-		_, _ = parseJSON(parseJSONP(tokenBody))
+		tokenPayload, _ = parseJSON(parseJSONP(tokenBody))
 	}
-	sec, err := shared.PolyvResolveSecure(c, v.polyVid, map[string]string{"Referer": refererURL})
+	polyvVID := shared.PolyvNormalizeVID(v.polyVid)
+	sec, err := shared.PolyvResolveSecure(c, polyvVID, map[string]string{"Referer": refererURL})
 	if err != nil {
 		return nil, err
 	}
@@ -595,13 +611,36 @@ func resolvePolyv(c *util.Client, v wx233Video) (*extractor.MediaInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	extra := map[string]any{"poly_vid": v.polyVid, "detail_id": v.detailID, "polyv_secure_url": fmt.Sprintf(urlPolyvSecure, v.polyVid)}
-	if txt, err := c.GetString(manifest, map[string]string{"Referer": refererURL}); err == nil && sec.Data.Playsafe.Token != "" {
-		if rewritten, err := shared.PolyvRewriteM3U8Keys(c, txt, sec.Data.Playsafe.Token, refererURL); err == nil {
+	token := firstNonEmpty(firstPolyvToken(tokenPayload), sec.PlayToken())
+	extra := map[string]any{"poly_vid": polyvVID, "raw_poly_vid": v.polyVid, "detail_id": v.detailID, "polyv_secure_url": fmt.Sprintf(urlPolyvSecure, polyvVID)}
+	if txt, err := c.GetString(manifest, map[string]string{"Referer": refererURL}); err == nil && token != "" {
+		if rewritten, err := shared.PolyvRewriteM3U8KeysWithOptions(c, txt, shared.PolyvRewriteOptions{Token: token, Referer: refererURL, ManifestURL: manifest, SeedConst: sec.SeedConst()}); err == nil {
 			extra["m3u8_text"] = rewritten
+			extra["m3u8_url"] = manifest
+			extra["source_type"] = "m3u8_text"
 		}
 	}
+	if _, ok := extra["source_type"]; !ok {
+		extra["source_type"] = "m3u8_url"
+	}
 	return media(v.title, manifest, "m3u8", extra), nil
+}
+
+func firstPolyvToken(v any) string {
+	priority := []string{"playsafe", "playSafe", "play_safe", "playSafeToken", "playToken", "play_token"}
+	for _, m := range mapsUnder(v) {
+		for _, key := range priority {
+			if token := val(m, key); token != "" {
+				return token
+			}
+		}
+	}
+	for _, m := range mapsUnder(v) {
+		if token := val(m, "token"); token != "" {
+			return token
+		}
+	}
+	return ""
 }
 
 func collectLectureFiles(data any, child, base wx233Course) []wx233File {
@@ -732,6 +771,13 @@ func resolveFile(c *util.Client, sess wx233Session, f wx233File, course wx233Cou
 			"file_type":    f.fileType,
 		},
 	}, nil
+}
+
+func skipFileForMode(f wx233File, mode int) bool {
+	if mode != modeOnlyPDF {
+		return false
+	}
+	return strings.EqualFold(fileFormat(firstNonEmpty(f.fmtName, f.url, f.title)), "mp4")
 }
 
 func resolveFileURL(c *util.Client, sess wx233Session, f wx233File, course wx233Course) string {
@@ -1154,15 +1200,31 @@ func media(title, u, fmtName string, extra map[string]any) *extractor.MediaInfo 
 	if title == "" {
 		title = "video"
 	}
+	fmtName = firstNonEmpty(fmtName, mediaFormat(u))
+	if strings.EqualFold(fmtName, "m3u8") && extra != nil {
+		if text, ok := extra["m3u8_text"].(string); ok && strings.TrimSpace(text) != "" {
+			if _, ok := extra["m3u8_url"]; !ok {
+				extra["m3u8_url"] = u
+			}
+			if _, ok := extra["source_type"]; !ok {
+				extra["source_type"] = "m3u8_text"
+			}
+			u = shared.M3U8DataURL(text)
+		}
+	}
 	stream := extractor.Stream{Quality: "best", URLs: []string{u}, Format: fmtName, Headers: map[string]string{"Referer": refererURL}}
-	if strings.Contains(strings.ToLower(fmtName), "m3u8") {
+	if strings.EqualFold(fmtName, "m3u8") {
 		stream.NeedMerge = true
 	}
 	return &extractor.MediaInfo{Site: "wangxiao233", Title: title, Streams: map[string]extractor.Stream{"default": stream}, Extra: extra}
 }
 func mediaFormat(u string) string {
-	u = strings.ToLower(u)
-	if strings.Contains(u, ".m3u8") {
+	u = strings.ToLower(strings.TrimSpace(u))
+	if strings.HasPrefix(u, "data:application/vnd.apple.mpegurl") ||
+		strings.HasPrefix(u, "data:application/x-mpegurl") ||
+		strings.Contains(u, ".m3u8") ||
+		strings.Contains(u, "format=m3u8") ||
+		strings.Contains(u, "type=m3u8") {
 		return "m3u8"
 	}
 	if strings.Contains(u, ".mp3") {
@@ -1307,5 +1369,27 @@ func qualityFromOpts(opts *extractor.ExtractOpts) string {
 	if opts == nil {
 		return ""
 	}
-	return opts.Quality
+	switch selectMode(opts.Quality) {
+	case modeSD:
+		return "sd"
+	case modeHD:
+		return "hd"
+	case modeFHD:
+		return "fhd"
+	default:
+		return ""
+	}
+}
+
+func selectMode(quality string) int {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "4", "pdf", "only_pdf", "only-pdf", "file", "files":
+		return modeOnlyPDF
+	case "3", "sd":
+		return modeSD
+	case "2", "hd":
+		return modeHD
+	default:
+		return modeFHD
+	}
 }

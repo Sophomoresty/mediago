@@ -3,7 +3,7 @@ package wangxiao
 
 import (
 	"bytes"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
 	"github.com/Sophomoresty/mediago/internal/util"
 )
 
@@ -33,6 +34,11 @@ const (
 	urlLiveHandout    = "https://live.wangxiao.cn/LiveActivity/DownHandOut/?Id=%s"
 	urlVideoPlay      = "https://p.bokecc.com/servlet/getvideofile?vid=%s&siteid=%s"
 	defaultBokeSiteID = "E601487AD12A3E06"
+
+	modeFHD     = 1
+	modeHD      = 2
+	modeSD      = 3
+	modeOnlyPDF = 4
 )
 
 var patterns = []string{`(?:[\w-]+\.)?wangxiao\.cn/(?:play|item|Course|player|user)|(?:[\w-]+\.)?bokecc\.com/`}
@@ -115,10 +121,11 @@ func (w *Wangxiao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		}
 	}
 
+	mode := selectMode(opts.Quality)
 	entries := make([]*extractor.MediaInfo, 0, len(refs))
 	seen := map[string]bool{}
 	for i, ref := range refs {
-		resolved, err := resolveRefEntries(c, ref, i+1, headers, opts.Quality)
+		resolved, err := resolveRefEntries(c, ref, i+1, headers, mode)
 		if err != nil {
 			continue
 		}
@@ -159,7 +166,7 @@ func (w *Wangxiao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	return &extractor.MediaInfo{Site: "wangxiao", Title: title, Entries: entries, Extra: extra}, nil
 }
 
-func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[string]string, quality string) ([]*extractor.MediaInfo, error) {
+func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[string]string, mode int) ([]*extractor.MediaInfo, error) {
 	if ref.ActivityID != "" {
 		if ref.Legacy {
 			ref.URL = fmt.Sprintf(urlPlayer, ref.ActivityID)
@@ -187,8 +194,8 @@ func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[str
 		ref.VideoID = extractVideoID(ref.URL)
 	}
 	var entries []*extractor.MediaInfo
-	if ref.VideoID != "" {
-		play, err := resolveBokeCCWangxiao(c, ref.VideoID, ref.SiteID, ref.URL, quality)
+	if ref.VideoID != "" && mode != modeOnlyPDF {
+		play, err := resolveBokeCCWangxiao(c, ref.VideoID, ref.SiteID, ref.URL, mode)
 		if err == nil && play.URL != "" {
 			title := strings.TrimSpace(ref.Title)
 			if title == "" {
@@ -202,8 +209,13 @@ func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[str
 				"video_play_url": fmt.Sprintf(urlVideoPlay, ref.VideoID, ref.SiteID),
 				"headers":        headers,
 			}
+			streamURL := play.URL
+			format := formatFromURL(streamURL)
 			if play.M3U8Text != "" {
+				streamURL = shared.M3U8DataURL(play.M3U8Text)
+				format = "m3u8"
 				extra["m3u8_text"] = play.M3U8Text
+				extra["m3u8_url"] = play.URL
 				extra["source_type"] = "m3u8_text"
 			}
 			entries = append(entries, &extractor.MediaInfo{
@@ -211,9 +223,9 @@ func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[str
 				Title: title,
 				Streams: map[string]extractor.Stream{"default": {
 					Quality:   "best",
-					URLs:      []string{play.URL},
-					Format:    formatFromURL(play.URL),
-					NeedMerge: strings.Contains(strings.ToLower(play.URL), ".m3u8"),
+					URLs:      []string{streamURL},
+					Format:    format,
+					NeedMerge: format == "m3u8",
 					Headers:   map[string]string{"Referer": ref.URL},
 				}},
 				Extra: extra,
@@ -228,13 +240,17 @@ func resolveRefEntries(c *util.Client, ref lessonRef, index int, headers map[str
 		if len(entries) > 0 || j > 0 {
 			name = fmt.Sprintf("%s-资料%d", name, j+1)
 		}
+		format := firstNonEmpty(ref.FileFmt, resourceExt(fileURL))
+		if mode == modeOnlyPDF && strings.EqualFold(format, "mp4") {
+			continue
+		}
 		entries = append(entries, &extractor.MediaInfo{
 			Site:  "wangxiao",
 			Title: name,
 			Streams: map[string]extractor.Stream{"default": {
 				Quality: "source",
 				URLs:    []string{fileURL},
-				Format:  firstNonEmpty(ref.FileFmt, resourceExt(fileURL)),
+				Format:  format,
 				Headers: map[string]string{"Referer": ref.URL},
 			}},
 			Extra: map[string]any{"activity_id": ref.ActivityID, "lesson_url": ref.URL, "type": "file", "source_url": ref.FileURL},
@@ -572,10 +588,24 @@ func isLoginPage(text string) bool {
 	return strings.Contains(text, "user.wangxiao.cn/login") || strings.Contains(text, "中大网校会员中心-登陆入口-中大网校") || strings.Contains(text, "/views/login/index.js")
 }
 func formatFromURL(u string) string {
-	if strings.Contains(strings.ToLower(u), ".m3u8") {
+	low := strings.ToLower(strings.TrimSpace(u))
+	if strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(low, "data:application/x-mpegurl") || strings.HasPrefix(low, "#extm3u") || strings.Contains(low, ".m3u8") || strings.Contains(low, "format=m3u8") || strings.Contains(low, "type=m3u8") {
 		return "m3u8"
 	}
 	return "mp4"
+}
+
+func selectMode(q string) int {
+	switch strings.ToLower(strings.TrimSpace(q)) {
+	case "4", "only_pdf", "only-pdf", "pdf", "file", "files", "资料":
+		return modeOnlyPDF
+	case "3", "sd", "low", "360", "标清":
+		return modeSD
+	case "2", "hd", "720", "高清":
+		return modeHD
+	default:
+		return modeFHD
+	}
 }
 
 // fetchUserClasshours fetches ProductsDirectory + GetClasshours to get the
@@ -737,7 +767,7 @@ type bokeCCXMLResponse struct {
 	Copies []bokeCCXMLCopy `xml:"copy"`
 }
 
-func resolveBokeCCWangxiao(c *util.Client, vid, siteid, referer, quality string) (bokeCCPlay, error) {
+func resolveBokeCCWangxiao(c *util.Client, vid, siteid, referer string, mode int) (bokeCCPlay, error) {
 	if vid == "" || siteid == "" {
 		return bokeCCPlay{}, fmt.Errorf("bokecc: missing vid or siteid")
 	}
@@ -751,9 +781,9 @@ func resolveBokeCCWangxiao(c *util.Client, vid, siteid, referer, quality string)
 		return bokeCCPlay{}, fmt.Errorf("bokecc: no playable variants")
 	}
 	sort.SliceStable(variants, func(i, j int) bool { return variants[i].Quality > variants[j].Quality })
-	chosen := chooseBokeVariant(variants, quality)
+	chosen := chooseBokeVariant(variants, mode)
 	play := bokeCCPlay{URL: chosen.URL, Quality: chosen.Quality}
-	if strings.Contains(strings.ToLower(chosen.URL), ".m3u8") {
+	if formatFromURL(chosen.URL) == "m3u8" {
 		if text, err := rewriteWangxiaoM3U8(c, chosen.URL, referer); err == nil && strings.TrimSpace(text) != "" {
 			play.M3U8Text = text
 		}
@@ -807,20 +837,21 @@ func parseBokeCCPayload(raw, base string) []bokeCCVariant {
 	return uniqueBokeVariants(out)
 }
 
-func chooseBokeVariant(variants []bokeCCVariant, quality string) bokeCCVariant {
+func chooseBokeVariant(variants []bokeCCVariant, mode int) bokeCCVariant {
 	if len(variants) == 0 {
 		return bokeCCVariant{}
 	}
-	q := strings.ToLower(strings.TrimSpace(quality))
-	switch {
-	case strings.Contains(q, "sd"), strings.Contains(q, "low"), strings.Contains(q, "360"), strings.Contains(q, "标清"):
-		return variants[len(variants)-1]
-	case strings.Contains(q, "hd"), strings.Contains(q, "720"), strings.Contains(q, "高清"):
-		if len(variants) >= 2 {
-			return variants[1]
-		}
+	idx := 0
+	switch mode {
+	case modeSD:
+		idx = 2
+	case modeHD:
+		idx = 1
 	}
-	return variants[0]
+	if idx >= len(variants) {
+		idx = len(variants) - 1
+	}
+	return variants[idx]
 }
 
 func rewriteWangxiaoM3U8(c *util.Client, m3u8URL, referer string) (string, error) {
@@ -838,7 +869,7 @@ func rewriteWangxiaoM3U8(c *util.Client, m3u8URL, referer string) (string, error
 			if len(key) > 16 {
 				key = key[:16]
 			}
-			text = strings.ReplaceAll(text, m[1], strings.ToUpper(hex.EncodeToString(key)))
+			text = strings.ReplaceAll(text, m[1], "data:application/octet-stream;base64,"+base64.StdEncoding.EncodeToString(key))
 		}
 	}
 	lines := strings.Split(text, "\n")

@@ -48,7 +48,7 @@ type profV2Ctx struct {
 	headers      map[string]string
 	mode         int
 	cid          string // courseId
-	courseInfoID  string
+	courseInfoID string
 	classID      string
 	title        string
 }
@@ -71,8 +71,10 @@ func (i *IcveProfessionV2) Extract(rawURL string, opts *extractor.ExtractOpts) (
 
 	// Parse courseId and classId from URL
 	if u, err := url.Parse(rawURL); err == nil {
-		x.cid = firstNonEmpty(u.Query().Get("id"), u.Query().Get("courseId"))
-		x.classID = u.Query().Get("classId")
+		q := u.Query()
+		x.cid = firstNonEmpty(q.Get("id"), q.Get("courseId"), q.Get("course_id"))
+		x.courseInfoID = firstNonEmpty(q.Get("courseInfoId"), q.Get("course_info_id"))
+		x.classID = firstNonEmpty(q.Get("classId"), q.Get("class_id"))
 	}
 	if x.cid == "" {
 		if m := profV2CIDRe.FindStringSubmatch(rawURL); len(m) >= 2 {
@@ -104,19 +106,23 @@ func newProfV2Ctx(jar http.CookieJar, mode int) *profV2Ctx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            "https://zjy2.icve.com.cn",
-		"cookie":             cookieHeader(jar, []string{"https://zjy2.icve.com.cn/", referer + "/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://zjy2.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
+	_ = ensureICVEBearerAuth(c, headers, profV2URLPassLogin, profV2URLCheckLogin)
 	return &profV2Ctx{c: c, headers: headers, mode: mode}
 }
 
 // loadCourseInfo fetches the course list and picks the first (or matching) course.
 // Source: Icve_Profession_V2._get_course_list + _get_title
 func (x *profV2Ctx) loadCourseInfo() error {
+	if x.cid != "" && x.courseInfoID != "" && x.classID != "" {
+		return nil
+	}
 	body, err := x.c.GetString(profV2URLCourseList, x.headers)
 	if err != nil {
-		// If listing fails (no auth), use URL-derived cid
-		if x.cid != "" {
+		// If listing fails (no auth), use URL-derived ids when complete enough.
+		if x.cid != "" && x.courseInfoID != "" && x.classID != "" {
 			return nil
 		}
 		return fmt.Errorf("icve_profession_v2: load course list: %w", err)
@@ -129,10 +135,13 @@ func (x *profV2Ctx) loadCourseInfo() error {
 		classID := str(row["classId"])
 		title := str(row["courseName"])
 
-		// If cid matches or we have no cid, pick this one
-		if x.cid == "" || x.cid == courseID || x.cid == courseInfoID {
-			x.cid = courseID
-			x.courseInfoID = courseInfoID
+		// If URL id matches courseId or courseInfoId, normalize to the API's
+		// courseId while preserving URL-provided courseInfoId/classId.
+		if x.cid == "" || x.cid == courseID || x.cid == courseInfoID || x.courseInfoID == courseInfoID {
+			if courseID != "" {
+				x.cid = courseID
+			}
+			x.courseInfoID = firstNonEmpty(x.courseInfoID, courseInfoID)
 			x.classID = firstNonEmpty(x.classID, classID)
 			x.title = cleanTitle(title)
 			return nil
@@ -225,31 +234,9 @@ func (x *profV2Ctx) getVideoURL(sourceID string) string {
 		return ""
 	}
 
-	// fileUrl in V2 is a JSON-encoded string
-	fileURLStr := str(data["fileUrl"])
-	ossGenURL := regexExtract(`"ossGenUrl"\s*:\s*"(.*?)"`, fileURLStr)
-	urlField := regexExtract(`"url"\s*:\s*"(.*?)"`, fileURLStr)
-
-	if ossGenURL != "" && urlField != "" {
-		statusBody, err := x.c.GetString(fmt.Sprintf(urlSourceStatus, strings.TrimLeft(urlField, "/")), x.headers)
-		if err == nil {
-			status := parseJSONMap(statusBody)
-			args := mapAt(status, "args")
-			ac := &aiCtx{c: x.c, headers: x.headers, mode: x.mode}
-			u := ac.selectTranscodedURL(ossGenURL, "mp4", map[string]any{"args": args})
-			if u != "" {
-				return u
-			}
-		}
-	}
-
-	// Fallback to ossOriUrl
-	ossOriURL := regexExtract(`"ossOriUrl"\s*:\s*"(.*?)"`, fileURLStr)
-	if ossOriURL != "" {
-		ossOriURL = strings.SplitN(ossOriURL, "?", 2)[0]
-		if strings.HasPrefix(ossOriURL, "http") {
-			return ossOriURL
-		}
+	payload := mergeICVEResourcePayload(data, data["fileUrl"])
+	if u, _, kind := resolveICVEResourceMedia(x.c, x.headers, x.mode, payload, "mp4"); u != "" && kind == "video" {
+		return u
 	}
 	return ""
 }
@@ -265,19 +252,9 @@ func (x *profV2Ctx) getSourceURL(sourceID string) string {
 	}
 	root := parseJSONMap(body)
 	data := mapAt(root, "data")
-	u := str(data["fileUrl"])
-	// V2 fileUrl may be a JSON string or direct URL
-	if strings.HasPrefix(u, "{") || strings.HasPrefix(u, "[") {
-		ossOriURL := regexExtract(`"ossOriUrl"\s*:\s*"(.*?)"`, u)
-		if ossOriURL != "" {
-			u = strings.SplitN(ossOriURL, "?", 2)[0]
-		} else {
-			fileURLInner := regexExtract(`"fileUrl"\s*:\s*"(.*?)"`, u)
-			if fileURLInner != "" {
-				u = strings.SplitN(fileURLInner, "?", 2)[0]
-			}
-		}
-	} else if idx := strings.LastIndex(u, "?"); idx > 0 {
+	payload := mergeICVEResourcePayload(data, data["fileUrl"])
+	u, _, _ := resolveICVEResourceMedia(x.c, x.headers, x.mode, payload, "")
+	if idx := strings.LastIndex(u, "?"); idx > 0 {
 		u = u[:idx]
 	}
 	if u != "" && strings.HasPrefix(u, "http") {
@@ -286,50 +263,33 @@ func (x *profV2Ctx) getSourceURL(sourceID string) string {
 	return ""
 }
 
+func (x *profV2Ctx) getSourcePayload(sourceID string) map[string]any {
+	body, err := x.c.GetString(
+		fmt.Sprintf(profV2URLSource, url.QueryEscape(sourceID), url.QueryEscape(x.classID)),
+		x.headers,
+	)
+	if err != nil {
+		return nil
+	}
+	data := mapAt(parseJSONMap(body), "data")
+	if len(data) == 0 {
+		return nil
+	}
+	return mergeICVEResourcePayload(data, data["fileUrl"])
+}
+
 func (x *profV2Ctx) buildMedia(items []profSourceItem) (*extractor.MediaInfo, error) {
 	var entries []*extractor.MediaInfo
 	for _, item := range items {
-		isVideo := isVideoType(item.FileType)
-		if isVideo && x.mode == ONLY_PDF {
-			continue
-		}
-		var u string
-		if isVideo {
-			u = x.getVideoURL(item.FileID)
-			if u == "" {
-				u = x.getSourceURL(item.FileID)
-			}
-		} else {
-			u = x.getSourceURL(item.FileID)
-		}
-		if u == "" {
-			continue
-		}
-		ext := pickExt(u)
-		if ext == "" {
-			if isVideo {
-				ext = "mp4"
-			} else {
-				ext = item.FileType
-			}
-		}
-		if ext == "" {
-			ext = "html"
-		}
-		entries = append(entries, &extractor.MediaInfo{
-			Site:  "icve",
-			Title: item.Name,
-			Streams: map[string]extractor.Stream{
-				ext: {
-					Quality:   ext,
-					URLs:      []string{u},
-					Format:    ext,
-					NeedMerge: ext == "m3u8",
-					Headers:   cloneHeaders(x.headers),
-				},
-			},
-			Extra: map[string]any{"kind": item.FileType, "module": "profession_v2"},
-		})
+		entries = append(entries, buildICVEResourceEntries(
+			x.c,
+			x.headers,
+			x.mode,
+			x.getSourcePayload(item.FileID),
+			item.FileType,
+			item.Name,
+			"profession_v2",
+		)...)
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("icve_profession_v2: no playable entries")

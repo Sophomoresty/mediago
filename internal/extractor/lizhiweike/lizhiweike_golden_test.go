@@ -30,6 +30,15 @@ func TestExtractMock(t *testing.T) {
 	goldenAssertMedia(t, "lizhiweike", got)
 }
 
+func TestLizhiInputURLVariants(t *testing.T) {
+	if m := channelRe.FindStringSubmatch("https://m.lizhiweike.com/channel2/1046930"); len(m) < 2 || m[1] != "1046930" {
+		t.Fatalf("channel2 match = %#v, want id 1046930", m)
+	}
+	if m := lectureRe.FindStringSubmatch("https://m.xrcox.cn/lecture2/34954475"); len(m) < 2 || m[1] != "34954475" {
+		t.Fatalf("lecture2 match = %#v, want id 34954475", m)
+	}
+}
+
 func goldenLoadRoutes(t *testing.T) map[string]json.RawMessage {
 	t.Helper()
 	data, err := os.ReadFile("testdata/sample.json")

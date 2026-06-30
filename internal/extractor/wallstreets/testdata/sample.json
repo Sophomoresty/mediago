@@ -13,5 +13,6 @@
     "version": 3
   },
   "master": "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nhttps://cdn.example.com/wallstreets/720.m3u8\n",
-  "variant": "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:5.0,\nhttps://cdn.example.com/wallstreets/seg-1.ts\n"
+  "variant": "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x010203\n#EXTINF:5.0,\nseg-1.ts\n#EXT-X-ENDLIST\n",
+  "key": "6f0c83bc105fd4430843"
 }

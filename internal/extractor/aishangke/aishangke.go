@@ -202,7 +202,9 @@ func checkCookie(c *util.Client, headers map[string]string) error {
 		Success bool           `json:"success"`
 		Data    map[string]any `json:"data"`
 	}
-	_ = json.Unmarshal([]byte(body), &resp)
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return fmt.Errorf("aishangke login check typed parse: %w", err)
+	}
 	_, hasStatus := raw["status"]
 	_, hasCode := raw["code"]
 	ok := resp.Success || (hasStatus && resp.Status == 0) || (hasCode && (resp.Code == 0 || resp.Code == 1))
@@ -709,8 +711,14 @@ func normalizeAnyURL(raw string) string {
 		return "https:" + raw
 	}
 	if strings.HasPrefix(raw, "/") {
-		base, _ := url.Parse(refererURL)
-		ref, _ := url.Parse(raw)
+		base, err := url.Parse(refererURL)
+		if err != nil {
+			return ""
+		}
+		ref, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
 		return base.ResolveReference(ref).String()
 	}
 	return raw

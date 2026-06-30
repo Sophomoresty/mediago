@@ -220,4 +220,11 @@ func TestExtractMock(t *testing.T) {
 			t.Fatalf("missing %s stream in formats %#v", want, formats)
 		}
 	}
+	for _, entry := range info.Entries {
+		for _, stream := range entry.Streams {
+			if stream.Format == "m3u8" && !stream.NeedMerge {
+				t.Fatalf("m3u8 stream must set NeedMerge: %#v", stream)
+			}
+		}
+	}
 }

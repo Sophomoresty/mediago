@@ -89,7 +89,11 @@ func (s *plasoSession) fetchAliSTSPlaySource(f fileItem) plasoSource {
 	if err != nil {
 		return plasoSource{}
 	}
-	return plasoSource{URL: info.URL, Format: firstNonEmpty(info.Format, formatOf(info.URL, f.Type)), Quality: firstNonEmpty(info.Definition, "best"), SourceType: info.SourceType, NeedMerge: info.NeedMerge, Size: info.Size, M3U8Text: info.M3U8Text, Extra: map[string]any{"aliyun_vid": videoID, "aliyun_api": info.APIURL, "encrypt_type": info.EncryptType}}
+	m3u8Text := info.M3U8Text
+	if m3u8Text != "" {
+		m3u8Text = absolutizeM3U8Text(m3u8Text, info.URL)
+	}
+	return plasoSource{URL: info.URL, Format: firstNonEmpty(info.Format, formatOf(info.URL, f.Type)), Quality: firstNonEmpty(info.Definition, "best"), SourceType: info.SourceType, NeedMerge: info.NeedMerge, Size: info.Size, M3U8Text: m3u8Text, Extra: map[string]any{"aliyun_vid": videoID, "aliyun_api": info.APIURL, "encrypt_type": info.EncryptType}}
 }
 
 func (s *plasoSession) fetchPolyvSource(f fileItem) plasoSource {
@@ -111,7 +115,13 @@ func (s *plasoSession) fetchPolyvSource(f fileItem) plasoSource {
 		if manifest, err := shared.PolyvPickBestManifest(sec); err == nil {
 			src := plasoSource{URL: s.normalizeMediaURL(manifest, ""), Format: "m3u8", Quality: "best", SourceType: "polyv", NeedMerge: true, Extra: map[string]any{"polyv_vid": vid}}
 			if text, err := s.client.GetString(src.URL, streamHeaders(s.headers)); err == nil && strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
-				if rewritten, err := shared.PolyvRewriteM3U8Keys(s.client, text, sec.Data.Playsafe.Token, s.eps.base); err == nil {
+				text = absolutizeM3U8Text(text, src.URL)
+				if rewritten, err := shared.PolyvRewriteM3U8KeysWithOptions(s.client, text, shared.PolyvRewriteOptions{
+					Token:       sec.PlayToken(),
+					Referer:     s.eps.base,
+					ManifestURL: src.URL,
+					SeedConst:   sec.SeedConst(),
+				}); err == nil {
 					src.M3U8Text = rewritten
 				}
 			}
@@ -617,7 +627,7 @@ func (s *plasoSession) sourceFromPlayInfo(v any, sourceType string) plasoSource 
 	src := plasoSource{URL: u, Format: fmtv, Quality: firstNonEmpty(quality, "best"), SourceType: sourceType, NeedMerge: fmtv == "m3u8", Size: parseSize(findFirstValue(v, "size", "Size", "fileSize"))}
 	if fmtv == "m3u8" {
 		if text, err := s.client.GetString(u, streamHeaders(s.headers)); err == nil && strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
-			src.M3U8Text = text
+			src.M3U8Text = absolutizeM3U8Text(text, u)
 		}
 	}
 	return src

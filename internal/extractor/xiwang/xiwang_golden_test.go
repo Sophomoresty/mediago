@@ -134,3 +134,59 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestOnlyFilesModeSkipsVideoAndPPTResolution(t *testing.T) {
+	var planCalled, playbackCalled, pptCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/checkLogin"):
+			_, _ = w.Write([]byte(`{"stat":1}`))
+		case strings.Contains(r.URL.Path, "/stuCourseList"):
+			_, _ = w.Write([]byte(`{"result":{"data":{"learningCourses":[{"courseId":"1001","courseName":"Test Course","stuCouId":"2001","type":"1"}],"endedCourses":[]}}}`))
+		case strings.Contains(r.URL.Path, "/planListV2"):
+			planCalled = true
+			_, _ = w.Write([]byte(`{"result":{"data":{"list":[{"planId":"3001","planName":"Lesson 1","bizId":"3"}]}}}`))
+		case strings.Contains(r.URL.Path, "/playback/enter"):
+			playbackCalled = true
+			_, _ = w.Write([]byte(`{"data":{"configs":{"appId":"demo","liveTypeId":"7","videoUrl":"https://media.example.com/lesson.m3u8"}}}`))
+		case strings.Contains(r.URL.Path, "/note/getTeacherNoteListV2"):
+			pptCalled = true
+			_, _ = w.Write([]byte(`{"data":{"picData":[{"pic_url":"https://media.example.com/slide.jpg"}]}}`))
+		case strings.Contains(r.URL.Path, "/getDatumListByType"):
+			_, _ = w.Write([]byte(`{"result":{"data":[{"name":"资料","files":[{"name":"handout.pdf","url":"https://cdn.example.com/handout.pdf"}]}]}}`))
+		case strings.Contains(r.URL.Path, "/mall/detail/1/"):
+			_, _ = w.Write([]byte(`{"data":{"priceModule":{"price":9900}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"stat":1,"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	media, err := (&Xiwang{}).Extract("https://www.xiwang.com/course/detail/1001?courseId=1001", &extractor.ExtractOpts{Cookies: jar, Quality: "2"})
+	if err != nil {
+		t.Fatalf("Extract only-files mode: %v", err)
+	}
+	if planCalled || playbackCalled || pptCalled {
+		t.Fatalf("only-files mode called video/PPT APIs: plan=%v playback=%v ppt=%v", planCalled, playbackCalled, pptCalled)
+	}
+	if media == nil || len(media.Entries) != 1 {
+		t.Fatalf("entries = %#v, want exactly one courseware entry", media)
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("only-files URL = %q, want handout PDF", got)
+	}
+	stream := media.Entries[0].Streams["default"]
+	if stream.Format != "pdf" {
+		t.Fatalf("courseware format = %q, want pdf", stream.Format)
+	}
+}

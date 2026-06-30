@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
 	"github.com/Sophomoresty/mediago/internal/util"
 )
 
@@ -28,6 +29,10 @@ const (
 	source_info_url      = "https://wallstreets.cn/my/course/%s/material?type=material"
 	token_url            = "https://wallstreets.cn/course/%s/task/%s/activity_show"
 	video_play_url       = "https://play.qiqiuyun.net/sdk_api/play?resNo=%s&token=%s&ssl=1&sdkType=js&lang=zh-CN"
+
+	modeHD      = 1
+	modeSD      = 2
+	modeOnlyPDF = 3
 )
 
 var patterns = []string{`(?:[\w-]+\.)?wallstreets\.cn/`}
@@ -97,12 +102,17 @@ func (s *Wallstreets) Extract(rawURL string, opts *extractor.ExtractOpts) (*extr
 	}
 	mode := selectMode(opts.Quality)
 	var entries []*extractor.MediaInfo
-	for _, v := range videos {
-		if entry := resolveVideo(c, h, cid, v, mode, cookie); entry != nil {
-			entries = append(entries, entry)
+	if mode != modeOnlyPDF {
+		for _, v := range videos {
+			if entry := resolveVideo(c, h, cid, v, mode, cookie); entry != nil {
+				entries = append(entries, entry)
+			}
 		}
 	}
 	for _, f := range files {
+		if mode == modeOnlyPDF && strings.EqualFold(f.Format, "mp4") {
+			continue
+		}
 		entries = append(entries, fileEntry(f, cookie))
 	}
 	if len(entries) == 0 {
@@ -293,10 +303,34 @@ func resolveVideo(c *util.Client, h map[string]string, cid string, v videoInfo, 
 		return nil
 	}
 	extra := map[string]any{"video_id": v.ID, "type": v.Kind, "res_no": resNo, "m3u8_version": version, "master_playlist": masterURL}
-	if meta := getM3U8Meta(c, h, playURL, version); len(meta) > 0 {
-		extra["m3u8_meta"] = meta
+	format := pickFormat(playURL, v.Kind)
+	if format == "m3u8" {
+		extra["m3u8_url"] = playURL
+		result := shared.PrepareQiqiuyunM3U8(c, playURL, shared.QiqiuyunM3U8Options{
+			Headers: h,
+			Referer: referer,
+			Cookie:  cookie,
+			Version: version,
+			Mode:    mode,
+		})
+		if result.Text != "" {
+			playURL = result.URL
+			extra["source_type"] = "m3u8_text"
+			extra["m3u8_text"] = result.Text
+			if result.SourceURL != "" {
+				extra["m3u8_url"] = result.SourceURL
+			}
+			if result.Meta != nil {
+				extra["m3u8_meta"] = result.Meta
+			}
+		} else {
+			extra["source_type"] = "m3u8_url"
+			if meta := getM3U8Meta(c, h, playURL, version); len(meta) > 0 {
+				extra["m3u8_meta"] = meta
+			}
+		}
 	}
-	return streamEntry(v.Title, playURL, pickFormat(playURL, v.Kind), cookie, extra)
+	return streamEntry(v.Title, playURL, format, cookie, extra)
 }
 
 func getToken(c *util.Client, h map[string]string, cid, vid string) (string, string) {
@@ -402,7 +436,7 @@ func streamEntry(title, rawURL, format, cookie string, extra map[string]any) *ex
 	if extra["type"] == "file" {
 		quality = "file"
 	}
-	return &extractor.MediaInfo{Site: "Wallstreets", Title: sanitize(title), Streams: map[string]extractor.Stream{quality: {Quality: quality, URLs: []string{rawURL}, Format: format, Headers: headers}}, Extra: extra}
+	return &extractor.MediaInfo{Site: "Wallstreets", Title: sanitize(title), Streams: map[string]extractor.Stream{quality: {Quality: quality, URLs: []string{rawURL}, Format: format, NeedMerge: format == "m3u8", Headers: headers}}, Extra: extra}
 }
 
 func cookieString(j http.CookieJar) string {
@@ -526,6 +560,10 @@ func fileExt(name string) string {
 }
 
 func pickFormat(raw, kind string) string {
+	low := strings.ToLower(strings.TrimSpace(raw))
+	if strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(low, "data:application/x-mpegurl") || strings.HasPrefix(low, "#extm3u") {
+		return "m3u8"
+	}
 	if ext := fileExt(rawURLPath(raw)); ext != "" {
 		return ext
 	}
@@ -549,11 +587,11 @@ func rawURLPath(raw string) string {
 func selectMode(q string) int {
 	switch strings.ToLower(strings.TrimSpace(q)) {
 	case "2", "sd", "low", "标清":
-		return 2
+		return modeSD
 	case "3", "only_pdf", "pdf":
-		return 3
+		return modeOnlyPDF
 	default:
-		return 1
+		return modeHD
 	}
 }
 

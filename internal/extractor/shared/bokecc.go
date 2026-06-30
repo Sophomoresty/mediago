@@ -13,6 +13,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/Sophomoresty/mediago/internal/util"
 )
@@ -34,6 +35,9 @@ type BokeCCResponse struct {
 // BokeCCResolve fetches getvideofile?vid&siteid and returns the highest-quality
 // playable mp4/m3u8 URL.
 func BokeCCResolve(c *util.Client, vid, siteid string, headers map[string]string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("bokecc: nil client")
+	}
 	if vid == "" || siteid == "" {
 		return "", fmt.Errorf("bokecc: missing vid or siteid")
 	}
@@ -50,14 +54,22 @@ func BokeCCResolve(c *util.Client, vid, siteid string, headers map[string]string
 	if len(resp.Videos) == 0 {
 		return "", fmt.Errorf("bokecc: no quality variants in response")
 	}
-	best := resp.Videos[0]
-	for _, v := range resp.Videos[1:] {
-		if v.Quality > best.Quality && v.PlayURL != "" {
+	best, ok := pickBestBokeCCCopy(resp.Videos)
+	if !ok {
+		return "", fmt.Errorf("bokecc: no playable URL in quality variants")
+	}
+	return best.PlayURL, nil
+}
+
+func pickBestBokeCCCopy(videos []BokeCCVideo) (BokeCCVideo, bool) {
+	var best BokeCCVideo
+	for _, v := range videos {
+		if strings.TrimSpace(v.PlayURL) == "" {
+			continue
+		}
+		if best.PlayURL == "" || v.Quality > best.Quality {
 			best = v
 		}
 	}
-	if best.PlayURL == "" {
-		return "", fmt.Errorf("bokecc: best variant has empty playurl")
-	}
-	return best.PlayURL, nil
+	return best, best.PlayURL != ""
 }

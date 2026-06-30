@@ -125,7 +125,7 @@ func parseSmartURL(rawURL string) smartContext {
 	return ctx
 }
 
-func extractSmart(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
+func extractSmart(rawURL string, opts *extractor.ExtractOpts, mode zhsMode) (*extractor.MediaInfo, error) {
 	ctx := parseSmartURL(rawURL)
 	if ctx.cid == "" && ctx.mapUID == "" {
 		return nil, fmt.Errorf("cannot parse zhihuishu smart URL: %s", rawURL)
@@ -147,15 +147,15 @@ func extractSmart(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaI
 
 	var entries []*extractor.MediaInfo
 	if ctx.cid != "" {
-		entries = append(entries, collectSmartCourseResources(c, ctx.cid, h)...)
+		entries = append(entries, collectSmartCourseResources(c, ctx.cid, h, mode)...)
 	}
 	var encryptedErr error
-	if nodeEntries, err := session.collectNodeEntries(ctx); err == nil {
+	if nodeEntries, err := session.collectNodeEntries(ctx, mode); err == nil {
 		entries = append(entries, nodeEntries...)
 	} else {
 		encryptedErr = err
 	}
-	if taskEntries, err := session.collectTaskEntries(ctx); err == nil {
+	if taskEntries, err := session.collectTaskEntries(ctx, mode); err == nil {
 		entries = append(entries, taskEntries...)
 	} else if encryptedErr == nil {
 		encryptedErr = err
@@ -184,13 +184,13 @@ func extractSmart(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaI
 
 // collectSmartCourseResources uses the non-encrypted course resource API
 // (Zhihuishu_Smart._get_course_resource_list + _download_course_resource_tree).
-func collectSmartCourseResources(c *util.Client, cid string, h map[string]string) []*extractor.MediaInfo {
+func collectSmartCourseResources(c *util.Client, cid string, h map[string]string, mode zhsMode) []*extractor.MediaInfo {
 	items := getSmartCourseResourceList(c, cid, "", h)
 	if len(items) == 0 {
 		return nil
 	}
 	visited := make(map[string]bool)
-	return walkSmartResourceTree(c, cid, items, h, visited, "")
+	return walkSmartResourceTree(c, cid, items, h, visited, "", mode)
 }
 
 // getSmartCourseResourceList implements Zhihuishu_Smart._get_course_resource_list.
@@ -234,7 +234,7 @@ type smartResourceItem struct {
 	Size              json.Number `json:"size"`
 }
 
-func walkSmartResourceTree(c *util.Client, cid string, items []smartResourceItem, h map[string]string, visited map[string]bool, prefix string) []*extractor.MediaInfo {
+func walkSmartResourceTree(c *util.Client, cid string, items []smartResourceItem, h map[string]string, visited map[string]bool, prefix string, mode zhsMode) []*extractor.MediaInfo {
 	var out []*extractor.MediaInfo
 	for i, item := range items {
 		idx := fmt.Sprintf("%d", i+1)
@@ -249,7 +249,7 @@ func walkSmartResourceTree(c *util.Client, cid string, items []smartResourceItem
 			}
 			visited[fid] = true
 			subItems := getSmartCourseResourceList(c, cid, fid, h)
-			sub := walkSmartResourceTree(c, cid, subItems, h, visited, idx)
+			sub := walkSmartResourceTree(c, cid, subItems, h, visited, idx, mode)
 			out = append(out, sub...)
 			continue
 		}
@@ -264,10 +264,13 @@ func walkSmartResourceTree(c *util.Client, cid string, items []smartResourceItem
 
 		// Check if video type
 		if dt == "video" || suffix == "mp4" {
+			if mode.onlyFiles {
+				continue
+			}
 			// Try to get best quality video URL
 			fid := firstNonEmpty(item.FileID, item.ResourcesFileID)
 			if fid != "" {
-				if betterURL := getSmartVideoURL(c, fid, fileURL, h); betterURL != "" {
+				if betterURL := getSmartVideoURL(c, fid, fileURL, h, mode); betterURL != "" {
 					fileURL = betterURL
 				}
 			}
@@ -371,7 +374,7 @@ func getSmartResourceSuffix(item smartResourceItem, _ string) string {
 // getSmartVideoURL implements Zhihuishu_Smart._get_video_url.
 // Uses initVideoNew + changeVideoLine with query params (not encrypted).
 // Compares file sizes across lines to pick best quality.
-func getSmartVideoURL(c *util.Client, fileID, fallbackURL string, h map[string]string) string {
+func getSmartVideoURL(c *util.Client, fileID, fallbackURL string, h map[string]string, mode zhsMode) string {
 	if fileID == "" || len(fileID) > 12 {
 		return fallbackURL
 	}
@@ -424,9 +427,10 @@ func getSmartVideoURL(c *util.Client, fileID, fallbackURL string, h map[string]s
 	if len(urls) == 0 {
 		return fallbackURL
 	}
-	// Return the last URL (typically highest quality, matching source logic
-	// which sorts by Content-Length and picks [-1] for HD)
-	return urls[len(urls)-1]
+	if mode.hd {
+		return urls[len(urls)-1]
+	}
+	return urls[0]
 }
 
 type smartSession struct {
@@ -468,7 +472,7 @@ func (s *smartSession) resolveTitle(ctx *smartContext) string {
 	return sanitize(firstNonEmpty(smartString(data["mapName"]), ""))
 }
 
-func (s *smartSession) collectNodeEntries(ctx smartContext) ([]*extractor.MediaInfo, error) {
+func (s *smartSession) collectNodeEntries(ctx smartContext, mode zhsMode) ([]*extractor.MediaInfo, error) {
 	nodes, err := s.smartNodes(ctx)
 	if err != nil || len(nodes) == 0 {
 		return nil, err
@@ -483,7 +487,7 @@ func (s *smartSession) collectNodeEntries(ctx smartContext) ([]*extractor.MediaI
 		if node.path != "" {
 			prefix = node.path
 		}
-		out = append(out, smartResourcesToEntries(s.c, ctx.cid, resources, s.h, prefix, node.name, map[string]any{"node_id": node.id})...)
+		out = append(out, smartResourcesToEntries(s.c, ctx.cid, resources, s.h, prefix, node.name, map[string]any{"node_id": node.id}, mode)...)
 	}
 	return out, nil
 }
@@ -587,7 +591,7 @@ func (s *smartSession) nodeResources(ctx smartContext, nodeID string) ([]map[str
 	return smartList(root["data"]), nil
 }
 
-func (s *smartSession) collectTaskEntries(ctx smartContext) ([]*extractor.MediaInfo, error) {
+func (s *smartSession) collectTaskEntries(ctx smartContext, mode zhsMode) ([]*extractor.MediaInfo, error) {
 	if ctx.cid == "" || ctx.classID == "" {
 		return nil, nil
 	}
@@ -609,12 +613,12 @@ func (s *smartSession) collectTaskEntries(ctx smartContext) ([]*extractor.MediaI
 		}
 		taskName := firstNonEmpty(smartString(smartMap(detail["data"])["taskName"]), smartString(task["taskName"]), "资料任务")
 		extra := map[string]any{"task_id": taskID}
-		out = append(out, smartResourcesToEntries(s.c, ctx.cid, smartList(resRoot["data"]), s.h, fmt.Sprintf("task.%d", i+1), taskName, extra)...)
+		out = append(out, smartResourcesToEntries(s.c, ctx.cid, smartList(resRoot["data"]), s.h, fmt.Sprintf("task.%d", i+1), taskName, extra, mode)...)
 	}
 	return out, nil
 }
 
-func smartResourcesToEntries(c *util.Client, cid string, resources []map[string]any, h map[string]string, prefix, group string, extraBase map[string]any) []*extractor.MediaInfo {
+func smartResourcesToEntries(c *util.Client, cid string, resources []map[string]any, h map[string]string, prefix, group string, extraBase map[string]any, mode zhsMode) []*extractor.MediaInfo {
 	var out []*extractor.MediaInfo
 	for i, item := range resources {
 		dataType := firstNonEmpty(smartString(item["dataType"]), smartString(item["resourcesDataType"]))
@@ -632,8 +636,11 @@ func smartResourcesToEntries(c *util.Client, cid string, resources []map[string]
 		if dataType == "22" || dataType == "video" {
 			suffix = "mp4"
 		}
+		if suffix == "mp4" && mode.onlyFiles {
+			continue
+		}
 		if suffix == "mp4" && fileID != "" {
-			fileURL = getSmartVideoURL(c, fileID, fileURL, h)
+			fileURL = getSmartVideoURL(c, fileID, fileURL, h, mode)
 		}
 		if fileURL == "" {
 			continue

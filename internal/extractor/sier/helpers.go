@@ -202,7 +202,13 @@ func sanitize(s string) string {
 	return regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`).ReplaceAllString(s, "_")
 }
 func pickFormat(u string) string {
+	if strings.HasPrefix(strings.ToLower(u), "data:application/vnd.apple.mpegurl") {
+		return "m3u8"
+	}
 	p := strings.ToLower(strings.SplitN(strings.SplitN(u, "?", 2)[0], "#", 2)[0])
+	if strings.Contains(p, ".m3u8") {
+		return "m3u8"
+	}
 	if i := strings.LastIndex(p, "."); i >= 0 && i < len(p)-1 {
 		return p[i+1:]
 	}

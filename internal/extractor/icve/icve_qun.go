@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -100,7 +101,7 @@ func newQunCtx(jar http.CookieJar, mode int) *qunCtx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            "https://qun.icve.com.cn",
-		"cookie":             cookieHeader(jar, []string{"https://qun.icve.com.cn/", referer + "/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://qun.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
 	return &qunCtx{c: c, headers: headers, mode: mode}
@@ -108,6 +109,16 @@ func newQunCtx(jar http.CookieJar, mode int) *qunCtx {
 
 func parseQunCID(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if u, err := url.Parse(raw); err == nil {
+		for _, key := range []string{"courseOpenId", "courseId", "courseid", "cid", "id"} {
+			if v := strings.TrimSpace(u.Query().Get(key)); v != "" {
+				return v
+			}
+		}
+		if strings.EqualFold(u.Hostname(), "qun.icve.com.cn") {
+			raw = u.Path
+		}
+	}
 	if m := qunCIDRe.FindStringSubmatch(raw); len(m) >= 2 {
 		return strings.TrimSpace(m[1])
 	}

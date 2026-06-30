@@ -262,7 +262,7 @@ func str(v any) string {
 	case json.Number:
 		return t.String()
 	case float64:
-		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.0f", t), "0"), ".")
+		return strconv.FormatFloat(t, 'f', -1, 64)
 	default:
 		if v == nil {
 			return ""

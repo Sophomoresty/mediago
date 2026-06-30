@@ -229,10 +229,10 @@ func mageduBuildEntry(c *util.Client, sess *mageduSession, cid string, item mage
 		return nil, err
 	}
 	manifest = mageduNormalizePolyvManifest(manifest)
+	token := firstText(playSafe, sec.PlayToken())
 	if strings.Contains(strings.ToLower(manifest), ".pdx") {
-		return nil, fmt.Errorf("magedu polyv %s: blocked needs PDX DRM JS engine", polyvVID)
+		return mageduPolyvPDXEntry(c, item, polyvVID, manifest, token, sec, polyvHeaders)
 	}
-	token := firstText(playSafe, sec.Data.Playsafe.Token)
 	streamURL := manifest
 	streamFormat := mageduStreamFormat(manifest)
 	extra := map[string]any{"video_id": item.VideoID, "polyv_vid": polyvVID, "section_id": item.SectionID, "video_storage_id": item.StorageID, "playSafeToken": playSafe, "token": token}

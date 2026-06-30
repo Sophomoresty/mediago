@@ -260,7 +260,10 @@ func postoken(j http.CookieJar) string {
 	if j == nil {
 		return ""
 	}
-	u, _ := url.Parse(origin + "/")
+	u, err := url.Parse(origin + "/")
+	if err != nil {
+		return ""
+	}
 	for _, ck := range j.Cookies(u) {
 		if ck.Name == "cpstk" {
 			if v, err := url.QueryUnescape(strings.TrimSpace(ck.Value)); err == nil {

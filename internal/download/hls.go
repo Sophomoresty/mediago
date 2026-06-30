@@ -323,7 +323,13 @@ func (e *Engine) resolveM3U8Key(rawURI, baseURL string, headers map[string]strin
 	if rawURI == "" {
 		return nil, fmt.Errorf("m3u8 AES-128 key URI missing")
 	}
+	if key, ok, err := decodeInlineHexKey(rawURI); ok || err != nil {
+		return key, err
+	}
 	keyURL := resolveM3U8URI(rawURI, baseURL)
+	if key, ok, err := decodeInlineHexKey(keyURL); ok || err != nil {
+		return key, err
+	}
 	if strings.HasPrefix(strings.ToLower(keyURL), "data:") {
 		return decodeDataURLBytes(keyURL)
 	}
@@ -346,9 +352,24 @@ func (e *Engine) resolveM3U8Key(rawURI, baseURL string, headers map[string]strin
 	return io.ReadAll(resp.Body)
 }
 
+func decodeInlineHexKey(raw string) ([]byte, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(raw), "0x") {
+		return nil, false, nil
+	}
+	if len(raw) <= 2 {
+		return nil, true, fmt.Errorf("empty inline hex AES-128 key")
+	}
+	key, err := hex.DecodeString(strings.TrimSpace(raw[2:]))
+	if err != nil {
+		return nil, true, fmt.Errorf("invalid inline hex AES-128 key: %w", err)
+	}
+	return key, true, nil
+}
+
 func resolveM3U8URI(raw, baseURL string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") {
+	if raw == "" || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") || strings.HasPrefix(strings.ToLower(raw), "0x") {
 		return raw
 	}
 	if strings.HasPrefix(raw, "//") {

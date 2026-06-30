@@ -24,22 +24,22 @@ import (
 )
 
 const (
-	COURSENAME         = "{1}--课程"
-	FILENAME           = "{2}--资源"
-	MATERIAL           = "【全部素材】"
-	IS_HD              = 1
-	IS_SD              = 2
-	ONLY_PDF           = 3
-	LEN_S              = 96
-	LEN_               = 48
-	TIME_SLEEP         = 3.6
-	referer            = "https://www.icve.com.cn"
-	smarteduReferer    = "https://vocational.smartedu.cn"
-	urlTitle           = "https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId=%s"
-	urlInfo            = "https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId=%s&courseId=%s"
-	urlCell            = "https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=%s&courseId=%s&parentId=%s"
-	urlSourceStatus    = "https://upload.icve.com.cn/%s/status"
-	smarteduQueryURL   = "https://vocational.smartedu.cn/gjzyjy/inco/ht/queryList"
+	COURSENAME          = "{1}--课程"
+	FILENAME            = "{2}--资源"
+	MATERIAL            = "【全部素材】"
+	IS_HD               = 1
+	IS_SD               = 2
+	ONLY_PDF            = 3
+	LEN_S               = 96
+	LEN_                = 48
+	TIME_SLEEP          = 3.6
+	referer             = "https://www.icve.com.cn"
+	smarteduReferer     = "https://vocational.smartedu.cn"
+	urlTitle            = "https://ai.icve.com.cn/prod-api/course/courseInfo/getLatestInfoByCourseId?courseId=%s"
+	urlInfo             = "https://ai.icve.com.cn/prod-api/course/courseDesign/getDesignList?courseInfoId=%s&courseId=%s"
+	urlCell             = "https://ai.icve.com.cn/prod-api/course/courseDesign/getCellList?courseInfoId=%s&courseId=%s&parentId=%s"
+	urlSourceStatus     = "https://upload.icve.com.cn/%s/status"
+	smarteduQueryURL    = "https://vocational.smartedu.cn/gjzyjy/inco/ht/queryList"
 	smarteduDetailSQLID = "171695011763866a394676496125233763746e2fbd87ebc94"
 )
 
@@ -244,7 +244,7 @@ func newCtx(jar http.CookieJar, mode int) *aiCtx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            referer,
-		"cookie":             cookieHeader(jar, []string{referer + "/", "https://ai.icve.com.cn/", "https://upload.icve.com.cn/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://ai.icve.com.cn/", "https://upload.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
 	return &aiCtx{c: c, headers: headers, mode: mode}
@@ -325,24 +325,11 @@ func (x *aiCtx) mediaFromItems(items []aiItem) (*extractor.MediaInfo, error) {
 				Extra: map[string]any{"kind": "video"},
 			})
 		case "file":
-			url, ext := x.getFileURL(item.Info)
-			if url == "" {
+			fileEntries := x.fileMediaEntries(item)
+			if len(fileEntries) == 0 {
 				continue
 			}
-			if ext == "" {
-				ext = pickExt(url)
-			}
-			if ext == "" {
-				ext = "html"
-			}
-			entries = append(entries, &extractor.MediaInfo{
-				Site:  "icve",
-				Title: item.Name,
-				Streams: map[string]extractor.Stream{
-					ext: {Quality: ext, URLs: []string{url}, Format: ext, Headers: cloneHeaders(x.headers)},
-				},
-				Extra: map[string]any{"kind": "file"},
-			})
+			entries = append(entries, fileEntries...)
 		default:
 			lastErr = fmt.Errorf("icve: unknown item kind %q", item.Kind)
 		}
@@ -360,6 +347,41 @@ func (x *aiCtx) mediaFromItems(items []aiItem) (*extractor.MediaInfo, error) {
 		return entries[0], nil
 	}
 	return &extractor.MediaInfo{Site: "icve", Title: firstNonEmpty(x.title, x.cid, "icve"), Entries: entries, Extra: map[string]any{"course_id": x.cid, "info_id": x.infoID}}, nil
+}
+
+func (x *aiCtx) fileMediaEntries(item aiItem) []*extractor.MediaInfo {
+	rawURL, ext := x.getFileURL(item.Info)
+	if isDownloadableICVEURL(rawURL) {
+		if ext == "" {
+			ext = pickExt(rawURL)
+		}
+		if ext == "" {
+			ext = "html"
+		}
+		return []*extractor.MediaInfo{{
+			Site:  "icve",
+			Title: item.Name,
+			Streams: map[string]extractor.Stream{
+				ext: {Quality: ext, URLs: []string{rawURL}, Format: ext, Headers: cloneHeaders(x.headers)},
+			},
+			Extra: map[string]any{"kind": "file"},
+		}}
+	}
+
+	payload := parseICVEResourcePayload(item.Info)
+	if len(payload) == 0 {
+		return nil
+	}
+	fileType := firstNonEmpty(
+		item.Ext,
+		str(payload["fileType"]),
+		str(payload["file_type"]),
+		str(payload["type"]),
+		str(payload["suffix"]),
+		str(payload["fileSuffix"]),
+		pickExt(rawURL),
+	)
+	return buildICVEResourceEntries(x.c, x.headers, x.mode, payload, fileType, item.Name, "ai")
 }
 
 func (x *aiCtx) getVideoURL(videoInfo string) (string, string) {
@@ -460,4 +482,10 @@ func (x *aiCtx) selectVideoQuality(args map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func isDownloadableICVEURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:")
 }

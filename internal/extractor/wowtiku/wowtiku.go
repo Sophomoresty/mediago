@@ -103,15 +103,17 @@ func (s *Wowtiku) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	files = dedupeFiles(files)
 	entries := []*extractor.MediaInfo{}
 	seen := map[string]bool{}
-	for _, v := range videos {
-		entry, err := resolveVideo(c, sess, v, opts)
-		if err != nil || entry == nil || len(entry.Streams) == 0 {
-			continue
-		}
-		u := firstStreamURL(entry)
-		if u != "" && !seen[u] {
-			seen[u] = true
-			entries = append(entries, entry)
+	if !onlyPDF(opts) {
+		for _, v := range videos {
+			entry, err := resolveVideo(c, sess, v, opts)
+			if err != nil || entry == nil || len(entry.Streams) == 0 {
+				continue
+			}
+			u := firstStreamURL(entry)
+			if u != "" && !seen[u] {
+				seen[u] = true
+				entries = append(entries, entry)
+			}
 		}
 	}
 	for i, f := range files {
@@ -135,6 +137,9 @@ func firstCourseID(c *util.Client, sess wtSession) (string, error) {
 	courses, err := purchasedCourses(c, sess)
 	if err != nil {
 		return "", err
+	}
+	if len(courses) == 0 {
+		return "", fmt.Errorf("wowtiku: no purchased courses")
 	}
 	return courses[0].id, nil
 }
@@ -628,8 +633,8 @@ func mediaFormat(u string) string {
 	if strings.Contains(l, ".m3u8") {
 		return "m3u8"
 	}
-	if strings.Contains(l, ".mp3") {
-		return "mp3"
+	if ext := fileExt(u); ext != "" {
+		return ext
 	}
 	return "mp4"
 }
@@ -676,6 +681,20 @@ func qualityFromOpts(opts *extractor.ExtractOpts) string {
 		return ""
 	}
 	return opts.Quality
+}
+
+func onlyPDF(opts *extractor.ExtractOpts) bool {
+	if opts == nil {
+		return false
+	}
+	q := strings.ToLower(strings.TrimSpace(opts.Quality))
+	q = strings.NewReplacer("-", "", "_", "", " ", "").Replace(q)
+	switch q {
+	case "4", "pdf", "onlypdf", "courseware", "material", "materials", "document", "documents", "file", "files", "课件", "资料":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectFiles(data any) []wtFile {
@@ -774,7 +793,12 @@ func hasAnyKey(m map[string]any, keys ...string) bool {
 
 func isVideoMediaURL(raw string) bool {
 	lower := strings.ToLower(raw)
-	return strings.Contains(lower, ".m3u8") || strings.Contains(lower, ".mp4") || strings.Contains(lower, ".flv") || strings.Contains(lower, ".m4v") || strings.Contains(lower, ".mov")
+	for _, ext := range []string{".m3u8", ".mp4", ".flv", ".m4v", ".mov", ".mpg", ".mpeg", ".avi", ".wmv", ".ts"} {
+		if strings.Contains(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func fileExt(raw string) string {

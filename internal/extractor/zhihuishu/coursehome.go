@@ -38,10 +38,11 @@ const (
 // courseContext mirrors the cid/crid/rid/tid state the Python Zhihuishu_Course
 // threads through _get_cid -> _get_title -> _get_infos.
 type courseContext struct {
-	cid  string
-	crid string
-	rid  string
-	tid  string
+	cid       string
+	crid      string
+	rid       string
+	tid       string
+	hashItems []courseHomeHash
 }
 
 type courseHomeVideo struct {
@@ -49,7 +50,13 @@ type courseHomeVideo struct {
 	VideoID string
 }
 
-func extractCourseHomeCourse(rawURL, courseID string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
+type courseHomeHash struct {
+	Title  string
+	IDStr  string
+	IDHash string
+}
+
+func extractCourseHomeCourse(rawURL, courseID string, opts *extractor.ExtractOpts, mode zhsMode) (*extractor.MediaInfo, error) {
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
 	h := zhihuishuHeaders("https://coursehome.zhihuishu.com/")
@@ -83,44 +90,41 @@ func extractCourseHomeCourse(rawURL, courseID string, opts *extractor.ExtractOpt
 	// _get_infos: enumerate the full course tree. Primary source is the
 	// AES-signed videolist / kgCourseTreeInfoList APIs; HTML scrape of the
 	// communication/content page is the documented fallback.
-	videos := getInfos(c, &ctx, h)
-	if len(videos) == 0 {
-		return nil, fmt.Errorf("courseHome %s returned no videos (no videolist/kgCourseTree/content entries)", firstNonEmpty(ctx.cid, ctx.crid, courseID))
-	}
-
 	var entries []*extractor.MediaInfo
 	var firstErr error
-	for _, item := range videos {
-		if item.VideoID == "" {
-			continue
-		}
-		videoURL, err := getVideoURL(c, item.VideoID, h)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
+	videos := getInfos(c, &ctx, h)
+	if !mode.onlyFiles {
+		for _, item := range videos {
+			if item.VideoID == "" {
+				continue
 			}
-			continue
-		}
-		subURL, _ := getSubtitleURL(c, item.VideoID, h)
-		entries = append(entries, &extractor.MediaInfo{
-			Site:  "zhihuishu",
-			Title: item.Title,
-			Streams: map[string]extractor.Stream{
-				"default": {
-					Quality: "best",
-					URLs:    []string{videoURL},
-					Format:  pickFormat(videoURL),
-					Headers: h,
+			videoURL, err := getVideoURL(c, item.VideoID, h, mode)
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			subURL, _ := getSubtitleURL(c, item.VideoID, h)
+			entries = append(entries, &extractor.MediaInfo{
+				Site:  "zhihuishu",
+				Title: item.Title,
+				Streams: map[string]extractor.Stream{
+					"default": {
+						Quality: "best",
+						URLs:    []string{videoURL},
+						Format:  pickFormat(videoURL),
+						Headers: h,
+					},
 				},
-			},
-			Subtitles: subtitleFromURL(subURL),
-		})
+				Subtitles: subtitleFromURL(subURL),
+			})
+		}
 	}
 	if len(entries) == 0 {
-		if firstErr != nil {
-			return nil, fmt.Errorf("courseHome %s returned no playable videos: %w", firstNonEmpty(ctx.cid, ctx.crid, courseID), firstErr)
+		if !mode.onlyFiles && len(videos) > 0 && firstErr != nil {
+			firstErr = fmt.Errorf("course videos were found but none were playable: %w", firstErr)
 		}
-		return nil, fmt.Errorf("courseHome %s returned no playable videos", firstNonEmpty(ctx.cid, ctx.crid, courseID))
 	}
 
 	// Collect course resources (files/courseware) from the resource tree.
@@ -129,8 +133,15 @@ func extractCourseHomeCourse(rawURL, courseID string, opts *extractor.ExtractOpt
 	entries = append(entries, resourceEntries...)
 
 	// Collect hash-file entries from AI tree (idHash/idStr -> queryNodeDescription)
-	hashEntries := collectHashFileEntries(c, &ctx, h)
+	hashEntries := collectHashFileEntries(c, &ctx, h, mode)
 	entries = append(entries, hashEntries...)
+
+	if len(entries) == 0 {
+		if firstErr != nil {
+			return nil, fmt.Errorf("courseHome %s returned no downloadable entries: %w", firstNonEmpty(ctx.cid, ctx.crid, courseID), firstErr)
+		}
+		return nil, fmt.Errorf("courseHome %s returned no downloadable entries (no playable videos/resources/hash files)", firstNonEmpty(ctx.cid, ctx.crid, courseID))
+	}
 
 	return &extractor.MediaInfo{
 		Site:    "zhihuishu",
@@ -158,6 +169,7 @@ func extractCourseHomeCourse(rawURL, courseID string, opts *extractor.ExtractOpt
 // not videoIDs, and are intentionally not turned into playable entries here.
 func getInfos(c *util.Client, ctx *courseContext, h map[string]string) []courseHomeVideo {
 	var out []courseHomeVideo
+	ctx.hashItems = nil
 
 	if ctx.crid != "" {
 		plain := fmt.Sprintf(`{"recruitAndCourseId":"%s","dateFormate":%d}`, ctx.crid, time.Now().UnixMilli())
@@ -170,13 +182,17 @@ func getInfos(c *util.Client, ctx *courseContext, h map[string]string) []courseH
 		}
 	}
 
-	if len(out) == 0 && ctx.cid != "" && ctx.rid != "" {
+	if ctx.cid != "" && ctx.rid != "" {
 		plain := fmt.Sprintf(`{"courseId":%s,"recruitId":%s,"dateFormate":%d}`, ctx.cid, ctx.rid, time.Now().UnixMilli())
 		secret, err := aesEncryptSecret(plain)
 		if err == nil {
 			body, err := c.GetString(fmt.Sprintf(urlInfoAI, secret), h)
 			if err == nil {
-				out = parseKgCourseTree(body)
+				videos, hashes := parseKgCourseTree(body)
+				if len(out) == 0 {
+					out = videos
+				}
+				ctx.hashItems = append(ctx.hashItems, hashes...)
 			}
 		}
 	}
@@ -251,39 +267,60 @@ type kgCourseTreeResponse struct {
 		Lessons []struct {
 			Name         string      `json:"name"`
 			VideoID      json.Number `json:"videoId"`
+			IDHash       string      `json:"idHash"`
+			IDStr        string      `json:"idStr"`
 			SmallLessons []struct {
 				Name    string      `json:"name"`
 				VideoID json.Number `json:"videoId"`
+				IDHash  string      `json:"idHash"`
+				IDStr   string      `json:"idStr"`
 			} `json:"smallLessons"`
 		} `json:"lessons"`
 	} `json:"data"`
 }
 
-func parseKgCourseTree(body string) []courseHomeVideo {
+func parseKgCourseTree(body string) ([]courseHomeVideo, []courseHomeHash) {
 	var resp kgCourseTreeResponse
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		return nil
+		return nil, nil
 	}
-	var out []courseHomeVideo
+	var videos []courseHomeVideo
+	var hashes []courseHomeHash
 	for ci, node := range resp.Data {
 		for li, lesson := range node.Lessons {
+			title := fmt.Sprintf("[%d.%d]--%s", ci+1, li+1, sanitizeCourseHomeName(lesson.Name))
 			if vid := videoIDString(lesson.VideoID); vid != "" {
-				out = append(out, courseHomeVideo{
-					Title:   fmt.Sprintf("[%d.%d]--%s", ci+1, li+1, sanitizeCourseHomeName(lesson.Name)),
+				videos = append(videos, courseHomeVideo{
+					Title:   title,
 					VideoID: vid,
 				})
 			}
+			if lesson.IDHash != "" && lesson.IDStr != "" {
+				hashes = append(hashes, courseHomeHash{
+					Title:  title,
+					IDStr:  lesson.IDStr,
+					IDHash: lesson.IDHash,
+				})
+			}
 			for si, small := range lesson.SmallLessons {
+				title := fmt.Sprintf("[%d.%d.%d]--%s", ci+1, li+1, si+1, sanitizeCourseHomeName(small.Name))
 				if vid := videoIDString(small.VideoID); vid != "" {
-					out = append(out, courseHomeVideo{
-						Title:   fmt.Sprintf("[%d.%d.%d]--%s", ci+1, li+1, si+1, sanitizeCourseHomeName(small.Name)),
+					videos = append(videos, courseHomeVideo{
+						Title:   title,
 						VideoID: vid,
+					})
+				}
+				if small.IDHash != "" && small.IDStr != "" {
+					hashes = append(hashes, courseHomeHash{
+						Title:  title,
+						IDStr:  small.IDStr,
+						IDHash: small.IDHash,
 					})
 				}
 			}
 		}
 	}
-	return out
+	return videos, hashes
 }
 
 // videoIDString returns the videoId as a string, skipping the sentinel -1 and

@@ -3,6 +3,8 @@ package youdao
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -132,5 +134,67 @@ func TestExtractMock(t *testing.T) {
 	got := goldenFirstPlayableURL(media)
 	if !strings.Contains(got, "https://media.example.com/youdao/lesson-1.m3u8") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
+	}
+}
+
+func TestExtractRewritesM3U8ToInlineKeyDataURL(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/api/user_status.jsonp"):
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case strings.Contains(r.URL.Path, "/ai-product/api/app/v2/products/after-sale/1001"):
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"success":true,"data":{"title":"Course","videoPackageTab":[{"title":"Lesson","downloadUrl":"https://media.example.com/youdao/lesson.m3u8","id":"v1","cardPackageId":"c1","liveCenterId":"l1"}]}}`))
+		case strings.Contains(r.URL.Path, "/youdao/lesson.m3u8"):
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:1,\nseg.ts\n"))
+		case strings.Contains(r.URL.Path, "/hikari-live/api/consumer/v1/key"):
+			_, _ = w.Write(key)
+		default:
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	media, err := (&Youdao{}).Extract("https://www.ydshengxue.com/after-sale/1001?courseId=1001", &extractor.ExtractOpts{Cookies: jar})
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(media.Entries))
+	}
+	stream := media.Entries[0].Streams["default"]
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream format/merge = %q/%v, want m3u8/true", stream.Format, stream.NeedMerge)
+	}
+	const prefix = "data:application/vnd.apple.mpegurl;base64,"
+	if len(stream.URLs) != 1 || !strings.HasPrefix(stream.URLs[0], prefix) {
+		t.Fatalf("stream URL = %#v, want m3u8 data URL", stream.URLs)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stream.URLs[0], prefix))
+	if err != nil {
+		t.Fatalf("decode data URL: %v", err)
+	}
+	text := string(decoded)
+	wantKey := "URI=\"0x" + strings.ToUpper(hex.EncodeToString(key)) + "\""
+	if !strings.Contains(text, wantKey) {
+		t.Fatalf("m3u8 text missing inline key %q: %s", wantKey, text)
+	}
+	if !strings.Contains(text, "https://media.example.com/youdao/seg.ts") {
+		t.Fatalf("m3u8 text did not absolutize segment: %s", text)
+	}
+	if media.Entries[0].Extra["source_type"] != "m3u8_text" {
+		t.Fatalf("source_type=%#v, want m3u8_text", media.Entries[0].Extra["source_type"])
 	}
 }

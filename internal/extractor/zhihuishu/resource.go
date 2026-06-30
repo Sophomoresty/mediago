@@ -68,7 +68,7 @@ func getFileList(c *util.Client, cid, rid, tid string, folderID *string, h map[s
 		"type":      "0",
 		"termId":    tid,
 		"recruitId": rid,
-		"courseId":   cid,
+		"courseId":  cid,
 	}
 	if folderID != nil {
 		data["folderId"] = *folderID
@@ -357,9 +357,91 @@ func zhsPostJSON(c *util.Client, apiURL string, payload map[string]any, headers 
 // collectHashFileEntries attempts to resolve AI-tree hash-based resources
 // via queryNodeDescription. These are share-course-map resources identified
 // by idHash/idStr rather than numeric videoId.
-func collectHashFileEntries(_ *util.Client, _ *courseContext, _ map[string]string) []*extractor.MediaInfo {
-	// The AI tree's idHash/idStr resources require the share-course-map-service
-	// queryNodeDescription API which returns HTML content, not downloadable media.
-	// Skipped as non-downloadable content.
-	return nil
+func collectHashFileEntries(c *util.Client, ctx *courseContext, h map[string]string, mode zhsMode) []*extractor.MediaInfo {
+	if ctx == nil || len(ctx.hashItems) == 0 {
+		return nil
+	}
+	var out []*extractor.MediaInfo
+	for i, hash := range ctx.hashItems {
+		files := getHashFileList(c, hash.IDStr, hash.IDHash, h)
+		for j, file := range files {
+			name := sanitize(firstNonEmpty(file.FileName, hash.Title, "资源"))
+			prefix := fmt.Sprintf("[%d.%d]--", i+1, j+1)
+			switch file.FileType {
+			case "video":
+				if mode.onlyFiles {
+					continue
+				}
+				videoURL := getVideoURLFromFileID(c, file.FileID, h)
+				if videoURL == "" {
+					videoURL = file.FileURL
+				}
+				if !isHTTPURL(videoURL) {
+					continue
+				}
+				subURL := ""
+				if file.FileID != "" {
+					subURL, _ = getSubtitleURL(c, file.FileID, h)
+				}
+				out = append(out, &extractor.MediaInfo{
+					Site:  "zhihuishu",
+					Title: prefix + strings.TrimSuffix(name, ".mp4"),
+					Streams: map[string]extractor.Stream{
+						"default": {
+							Quality: "best",
+							URLs:    []string{videoURL},
+							Format:  pickFormat(videoURL),
+							Headers: h,
+						},
+					},
+					Subtitles: subtitleFromURL(subURL),
+					Extra: map[string]any{
+						"type":         "hash_video",
+						"id_str":       hash.IDStr,
+						"id_hash":      hash.IDHash,
+						"resource_url": file.FileURL,
+					},
+				})
+			default:
+				fileURL := file.FileURL
+				if !isHTTPURL(fileURL) {
+					continue
+				}
+				ext := resourceExtension(fileURL, name)
+				out = append(out, &extractor.MediaInfo{
+					Site:  "zhihuishu",
+					Title: prefix + name,
+					Streams: map[string]extractor.Stream{
+						"default": {
+							Quality: "default",
+							URLs:    []string{fileURL},
+							Format:  ext,
+							Headers: h,
+						},
+					},
+					Extra: map[string]any{
+						"type":    "hash_file",
+						"id_str":  hash.IDStr,
+						"id_hash": hash.IDHash,
+					},
+				})
+			}
+		}
+	}
+	return out
+}
+
+func getVideoURLFromFileID(c *util.Client, fileID string, h map[string]string) string {
+	if fileID == "" {
+		return ""
+	}
+	videoURL, err := getVideoURL(c, fileID, h, zhsMode{hd: true})
+	if err != nil {
+		return ""
+	}
+	return videoURL
+}
+
+func isHTTPURL(s string) bool {
+	return regexp.MustCompile(`^https?://`).MatchString(strings.TrimSpace(s))
 }

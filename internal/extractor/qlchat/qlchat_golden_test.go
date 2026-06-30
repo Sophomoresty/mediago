@@ -231,3 +231,55 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestPickFormatRecognizesM3U8Forms(t *testing.T) {
+	cases := []string{
+		"#EXTM3U\n#EXTINF:1,\nseg.ts\n",
+		"data:application/vnd.apple.mpegurl;charset=utf-8,%23EXTM3U",
+		"https://cdn.example.com/path/master.m3u8?auth=1",
+	}
+	for _, raw := range cases {
+		if got := pickFormat(raw); got != "m3u8" {
+			t.Fatalf("pickFormat(%q) = %q, want m3u8", raw, got)
+		}
+	}
+}
+
+func TestResolveTopicJoinsFreeCourseBeforeH5Retry(t *testing.T) {
+	var joined bool
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.Host == "m.qlchat.com" && strings.HasPrefix(r.URL.Path, "/wechat/page/topic-simple-video"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.Host == "m.qlchat.com" && r.URL.Path == "/api/wechat/topic/getMediaActualUrl":
+			_, _ = w.Write([]byte(`{"state":{"code":0},"data":{"video":[]}}`))
+		case r.Method == http.MethodGet && r.Host == "m.qlchat.com" && strings.HasPrefix(r.URL.Path, "/api/wechat/topic/media-url"):
+			if !joined {
+				_, _ = w.Write([]byte(`{"state":{"code":403,"msg":"请先报名"},"data":{"video":[]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"state":{"code":0},"data":{"video":[{"height":720,"width":1280,"playUrl":"https://cdn.example.com/free.m3u8?auth=1"}]}}`))
+		case r.Method == http.MethodPost && r.Host == "m.qlchat.com" && r.URL.Path == "/api/wechat/transfer/h5/topic/joinFreeCourse":
+			joined = true
+			_, _ = w.Write([]byte(`{"state":{"code":0}}`))
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	info, err := resolveTopic(util.NewClient(), map[string]string{"Referer": referer}, "topic-1", "free topic")
+	if err != nil {
+		t.Fatalf("resolveTopic returned error: %v", err)
+	}
+	stream := info.Streams["best"]
+	if !joined {
+		t.Fatalf("joinFreeCourse was not called")
+	}
+	if got := firstPlayableURL(info); !strings.Contains(got, "free.m3u8") {
+		t.Fatalf("playable URL = %q, want free.m3u8", got)
+	}
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream format/merge = %q/%v, want m3u8/true", stream.Format, stream.NeedMerge)
+	}
+}

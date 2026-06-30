@@ -66,6 +66,9 @@ type CssLcloudStreamInfo struct {
 // CssLcloudResolvePlayInfo runs the full login → vod chain and returns
 // playback info. This is the main entry point for parent-site extractors.
 func CssLcloudResolvePlayInfo(c *util.Client, p CssLcloudPayload) (*CssLcloudPlayInfo, error) {
+	if c == nil {
+		return nil, fmt.Errorf("csslcloud: nil client")
+	}
 	if p.LiveRoomID == "" || p.RecordID == "" || p.AccessID == "" {
 		return nil, fmt.Errorf("csslcloud: missing required liveRoomId/recordId/accessid")
 	}
@@ -135,7 +138,10 @@ func CssLcloudResolvePlayInfo(c *util.Client, p CssLcloudPayload) (*CssLcloudPla
 		return nil, fmt.Errorf("csslcloud vod: no video streams in response")
 	}
 
-	best := pickBestCssLcloudStream(videos)
+	best, ok := pickBestCssLcloudStream(videos)
+	if !ok {
+		return nil, fmt.Errorf("csslcloud vod: no playable video URL in response")
+	}
 	out := &CssLcloudPlayInfo{
 		SessionID: login.Datas.SessionID,
 		VideoURL:  best.URL,
@@ -149,14 +155,17 @@ func CssLcloudResolvePlayInfo(c *util.Client, p CssLcloudPayload) (*CssLcloudPla
 
 // pickBestCssLcloudStream picks the highest-definition video from a CSSL list.
 // Python source ranks definition desc; we replicate.
-func pickBestCssLcloudStream(list []CssLcloudStreamInfo) CssLcloudStreamInfo {
-	best := list[0]
-	for _, s := range list[1:] {
-		if s.Definition > best.Definition && s.URL != "" {
+func pickBestCssLcloudStream(list []CssLcloudStreamInfo) (CssLcloudStreamInfo, bool) {
+	var best CssLcloudStreamInfo
+	for _, s := range list {
+		if strings.TrimSpace(s.URL) == "" {
+			continue
+		}
+		if best.URL == "" || s.Definition > best.Definition {
 			best = s
 		}
 	}
-	return best
+	return best, best.URL != ""
 }
 
 // CssLcloudRewriteM3U8Keys rewrites EXT-X-KEY URI lines in a CSSL m3u8 manifest
@@ -169,6 +178,9 @@ func pickBestCssLcloudStream(list []CssLcloudStreamInfo) CssLcloudStreamInfo {
 // a downstream HLS downloader can read the manifest as-is without needing a
 // custom key fetcher.
 func CssLcloudRewriteM3U8Keys(c *util.Client, m3u8Text, referer string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("csslcloud: nil client")
+	}
 	if !strings.HasPrefix(strings.TrimSpace(m3u8Text), "#EXTM3U") {
 		return "", fmt.Errorf("csslcloud: input is not an m3u8 manifest")
 	}

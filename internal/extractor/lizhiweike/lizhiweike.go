@@ -39,6 +39,9 @@ type Lizhiweike struct{}
 func (l *Lizhiweike) Patterns() []string { return patterns }
 
 var (
+	// Python source accepts numbered H5 variants such as:
+	// https://m.lizhiweike.com/channel2/1046930
+	// https://m.xrcox.cn/lecture2/34954475
 	channelRe = regexp.MustCompile(`/channel\d?/([0-9]+)`)
 	lectureRe = regexp.MustCompile(`/(?:lecture|liveplay|classroom|liveroom)\d?/([0-9]+)`)
 )
@@ -209,7 +212,7 @@ func lizhiResolveTarget(c *util.Client, rawURL string, sess *lizhiSession) (lizh
 
 func lizhiFetchCourseList(c *util.Client, sess *lizhiSession) ([]lizhiCourseRef, error) {
 	if sess.WID == "" || sess.Token == "" {
-		return nil, nil
+		return []lizhiCourseRef{}, nil
 	}
 	var courses []lizhiCourseRef
 	offset := 0

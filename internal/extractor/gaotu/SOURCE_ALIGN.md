@@ -19,7 +19,7 @@
 
 | 源码方法 | Go 函数 | method | 一致? |
 |---|---|---|---|
-| `_get_course_list` line 61 | `resolveCourse` fallback + `gaotuCourseListRequestPayload()` pages 1..9 | POST JSON | ✓ |
+| `_get_course_list` line 61 | `fetchGaotuCourseList` list-only/root URL flow + `resolveCourse` fallback, `gaotuCourseListRequestPayload()` pages 1..9 | POST JSON | ✓ |
 | `_get_infos` line 158 | `resolveCourse` | POST JSON | ✓ |
 | `_get_video_url` line 200 / bytecode payload `liveId,sid,sessionId=0,roleType=0` | `resolveLesson` + `gaotuVideoRequestPayload()` | POST JSON | ✓ |
 | `_get_live_url` line 281 / bytecode payload `liveId,sessionId=0,roleType=0` | `resolveLesson` + `gaotuLiveRequestPayload()` + `postFormJSON()` | POST form, then JSON decode | ✓ |

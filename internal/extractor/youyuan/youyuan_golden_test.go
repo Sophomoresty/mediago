@@ -94,6 +94,64 @@ func TestExtractItemsNilReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestParseCIDHandlesQueryAndFragment(t *testing.T) {
+	tests := map[string]string{
+		"https://www.yijiayk.com/course?courseId=1001":                         "1001",
+		"https://h.yijiayk.com/#/course/detail?courseId=abc-123":               "abc-123",
+		"https://m.yijiayk.com/course-api/app/course/getByCourseId?courseId=x": "x",
+	}
+	for raw, want := range tests {
+		if got := parseCID(raw); got != want {
+			t.Fatalf("parseCID(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestHeadersFromJarUsesAccessTokenCaseInsensitive(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	u, err := url.Parse(refererURL)
+	if err != nil {
+		t.Fatalf("parse refererURL: %v", err)
+	}
+	jar.SetCookies(u, []*http.Cookie{{Name: "accesstoken", Value: "lower-token"}})
+
+	headers := headersFromJar(jar)
+	if headers["accessToken"] != "lower-token" {
+		t.Fatalf("accessToken header = %q, want lower-token", headers["accessToken"])
+	}
+	if headers["authorization"] != "lower-token" {
+		t.Fatalf("authorization header = %q, want lower-token", headers["authorization"])
+	}
+}
+
+func TestCollectLessonsPrefersChapterIDForTokenAPI(t *testing.T) {
+	root := map[string]any{
+		"data": []any{
+			map[string]any{
+				"chapterName": "第一章",
+				"courseLessonList": []any{
+					map[string]any{
+						"id":         "lesson-row-id",
+						"chapterId":  "chapter-token-id",
+						"lessonName": "第一课",
+					},
+				},
+			},
+		},
+	}
+
+	lessons := collectLessons(root)
+	if len(lessons) != 1 {
+		t.Fatalf("collectLessons len = %d, want 1: %#v", len(lessons), lessons)
+	}
+	if lessons[0].ID != "chapter-token-id" {
+		t.Fatalf("lesson ID = %q, want chapter-token-id", lessons[0].ID)
+	}
+}
+
 func TestExtractMock(t *testing.T) {
 	fixture := loadGoldenFixture(t)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

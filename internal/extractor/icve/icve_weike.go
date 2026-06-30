@@ -94,7 +94,7 @@ func newWeikeCtx(jar http.CookieJar, mode int) *weikeCtx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            referer,
-		"cookie":             cookieHeader(jar, []string{referer + "/", "https://www.icve.com.cn/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://www.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
 	return &weikeCtx{c: c, headers: headers, mode: mode}

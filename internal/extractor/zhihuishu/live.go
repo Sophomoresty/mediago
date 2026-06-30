@@ -45,10 +45,13 @@ func isLiveURL(u string) bool {
 
 // extractLive implements the Zhihuishu_Live flow:
 // _get_cid -> _get_title -> _get_infos -> _download
-func extractLive(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
+func extractLive(rawURL string, opts *extractor.ExtractOpts, mode zhsMode) (*extractor.MediaInfo, error) {
 	liveID := extractLiveID(rawURL)
 	if liveID == "" {
 		return nil, fmt.Errorf("cannot parse zhihuishu live URL: %s", rawURL)
+	}
+	if mode.onlyFiles {
+		return nil, fmt.Errorf("zhihuishu live %s has no courseware in only-files mode", liveID)
 	}
 
 	c := util.NewClient()
@@ -118,7 +121,7 @@ func extractLive(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaIn
 	usedNames := make(map[string]bool)
 	var entries []*extractor.MediaInfo
 	for _, v := range filtered {
-		videoURL, err := getVideoURL(c, strings.TrimSpace(v.ID), h)
+		videoURL, err := getVideoURL(c, strings.TrimSpace(v.ID), h, mode)
 		if err != nil || videoURL == "" {
 			continue
 		}

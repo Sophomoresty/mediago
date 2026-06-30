@@ -1,4 +1,4 @@
-// Icve_Course – mooc-old.icve.com.cn / course.icve.com.cn extraction.
+// Icve_Course – mooc-old.icve.com.cn / course.icve.com.cn / sso.icve.com.cn / user.icve.com.cn extraction.
 //
 // Source: Icve_Course.pyc.1shot.cdc.py and Icve_Course.pyc.1shot.das.
 // API: sso/user/mooc-old/course/zjy2 login + course tree + resource resolution.
@@ -52,15 +52,17 @@ const (
 
 // Source: Mooc_Config courses_re['Icve_Course']
 var coursePatterns = []string{
-	`\s*https?://course\.icve\.com\.cn/learnspace/learn/learn/templateeight/.*?course[Ii]d=(?P<cid>\w+)`,
-	`\s*https?://mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?cid=(?P<class_code>\w+)`,
-	`\s*https?://mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?class[Ii]d=(?P<class_id>\w+)`,
+	`\s*https?://course\.icve\.com\.cn/learnspace/learn/learn/templateeight/.*?course[Ii]d=(?P<cid>[-\w]+)`,
+	`\s*https?://mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?cid=(?P<class_code>[-\w]+)`,
+	`\s*https?://mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?class[Ii]d=(?P<class_id>[-\w]+)`,
 	`\s*https?://mooc-old\.icve\.com\.cn`,
+	`\s*https?://sso\.icve\.com\.cn(?:[/?#][^\s]*)?`,
+	`\s*https?://user\.icve\.com\.cn(?:[/?#][^\s]*)?`,
 }
 
 var (
 	courseCIDRe = regexp.MustCompile(
-		`(?i)(?:course\.icve\.com\.cn/.*?course[Ii]d=(\w+))|(?:mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?(cid|class[Ii]d)=(\w+))`,
+		`(?i)(?:course\.icve\.com\.cn/.*?course[Ii]d=([-\w]+))|(?:mooc-old\.icve\.com\.cn/cms/courseDetails/index\.htm\?(cid|class[Ii]d)=([-\w]+))`,
 	)
 	courseTokenRe        = regexp.MustCompile(`token:\'(.*?)\'`)
 	courseSiteCodeRe     = regexp.MustCompile(`siteCode:\'(.*?)\'`)
@@ -72,18 +74,18 @@ var (
 	courseSSOOKMsgRe     = regexp.MustCompile(`"msg"\s*:\s*"ok"`)
 	courseJoinOKRe       = regexp.MustCompile(`"errorCode"\s*:\s*"200"`)
 	courseVideoQualRe    = map[string]*regexp.Regexp{
-		"FHD": regexp.MustCompile(`"FHD":"(.*?)"`),
-		"HD":  regexp.MustCompile(`"HD":"(.*?)"`),
-		"SD":  regexp.MustCompile(`"SD":"(.*?)"`),
-		"LD":  regexp.MustCompile(`"LD":"(.*?)"`),
+		"FHD": regexp.MustCompile(`"FHD"\s*:\s*"(.*?)"`),
+		"HD":  regexp.MustCompile(`"HD"\s*:\s*"(.*?)"`),
+		"SD":  regexp.MustCompile(`"SD"\s*:\s*"(.*?)"`),
+		"LD":  regexp.MustCompile(`"LD"\s*:\s*"(.*?)"`),
 	}
 	courseResourceRe      = regexp.MustCompile(`resource\s*=\s*\'(?P<url>.*?)\'`)
 	courseTitleFmtRe      = regexp.MustCompile(`<title>.*?(?P<fmt>\.[a-zA-Z]+[0-9]?)</title>`)
-	courseOpenLearnItemRe = regexp.MustCompile(`openLearnResItem\('(\w+)'.*?\)`)
+	courseOpenLearnItemRe = regexp.MustCompile(`openLearnResItem\('([-\w]+)'.*?\)`)
 )
 
 func init() {
-	extractor.Register(&IcveCourse{}, extractor.SiteInfo{Name: "IcveCourse", URL: "mooc-old.icve.com.cn", NeedAuth: true})
+	extractor.Register(&IcveCourse{}, extractor.SiteInfo{Name: "IcveCourse", URL: "mooc-old.icve.com.cn,sso.icve.com.cn,user.icve.com.cn", NeedAuth: true})
 }
 
 type IcveCourse struct{}
@@ -171,15 +173,7 @@ func newCourseCtx(jar http.CookieJar, mode int) *courseCtx {
 }
 
 func courseCookieOrigins() []string {
-	return []string{
-		referer + "/",
-		"https://www.icve.com.cn/",
-		"https://sso.icve.com.cn/",
-		"https://user.icve.com.cn/",
-		"https://mooc-old.icve.com.cn/",
-		"https://course.icve.com.cn/",
-		"https://zjy2.icve.com.cn/",
-	}
+	return icveCookieOrigins()
 }
 
 func (x *courseCtx) refreshCookieHeader() {
@@ -232,10 +226,19 @@ func parseCourseURLIDs(raw string) (cid, classCode, classID string, isMoocRoot b
 	cid = firstNonEmpty(u.Query().Get("params.courseId"), u.Query().Get("courseId"), u.Query().Get("courseid"))
 	classCode = firstNonEmpty(u.Query().Get("cid"), u.Query().Get("classCode"))
 	classID = firstNonEmpty(u.Query().Get("classId"), u.Query().Get("class_id"))
-	if strings.EqualFold(u.Host, "mooc-old.icve.com.cn") && cid == "" && classCode == "" && classID == "" {
+	if isCourseLoginRootHost(u.Hostname()) && cid == "" && classCode == "" && classID == "" {
 		isMoocRoot = true
 	}
 	return
+}
+
+func isCourseLoginRootHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "mooc-old.icve.com.cn", "sso.icve.com.cn", "user.icve.com.cn":
+		return true
+	default:
+		return false
+	}
 }
 
 func (x *courseCtx) prepare(rawURL string, parseInfos bool) error {
@@ -306,12 +309,15 @@ func (x *courseCtx) checkZJY2Cookie(courseName, cookie string) bool {
 		return false
 	}
 	cookies := parseRawCookieHeader(cookie)
-	access := x.getZJY2AccessToken(cookies["token"])
+	access := strings.TrimSpace(cookies["Token"])
+	if access == "" {
+		access = x.getZJY2AccessToken(cookies["token"])
+	}
 	if access == "" {
 		return false
 	}
 	x.accessToken = access
-	withToken := appendCookieKV(cookie, "Token", access)
+	withToken := mergeCookieHeaders(cookie, "Token="+access)
 	auth := "Bearer " + access
 	headers := cloneHeaders(x.headers)
 	headers["cookie"] = withToken
@@ -445,13 +451,16 @@ func (x *courseCtx) getCourseList() []courseListItem {
 	var out []courseListItem
 	for _, row := range x.getMyCourses() {
 		if len(row) >= 9 {
-			out = append(out, courseListItem{CourseID: str(row[6]), Title: fmt.Sprintf("%s_%s", str(row[0]), str(row[8]))})
+			courseID := str(row[6])
+			if courseID != "" {
+				out = append(out, courseListItem{CourseID: courseID, Title: fmt.Sprintf("%s_%s", str(row[0]), str(row[8]))})
+			}
 		}
 	}
 	for _, row := range x.getUserCourses() {
 		courseID := str(row["ext9"])
 		title := str(row["ext1"])
-		if courseID != "" || title != "" {
+		if courseID != "" {
 			out = append(out, courseListItem{CourseID: courseID, Title: title})
 		}
 	}
@@ -1293,14 +1302,6 @@ func parseRawCookieHeader(cookie string) map[string]string {
 		out[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
 	return out
-}
-
-func appendCookieKV(cookie, key, value string) string {
-	cookie = strings.TrimSpace(cookie)
-	if cookie == "" {
-		return key + "=" + value
-	}
-	return cookie + ";" + key + "=" + value
 }
 
 func mergeCookieHeaders(base, extra string) string {

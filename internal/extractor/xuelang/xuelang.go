@@ -57,6 +57,7 @@ func (s *Xuelang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("xuelang requires login cookies")
 	}
+	onlyFiles := xuelangOnlyFilesMode(opts.Quality)
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
 	cookie := cookieHeader(opts.Cookies)
@@ -77,21 +78,26 @@ func (s *Xuelang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	if co.id == "" {
 		return nil, fmt.Errorf("xuelang course %q not found in learn_data_v2", wantCID)
 	}
-	lessons, err := fetchLessons(c, h, co.id)
-	if err != nil {
-		return nil, err
-	}
 	entries, seen := []*extractor.MediaInfo{}, map[string]bool{}
-	for _, l := range lessons {
-		for _, pm := range resolveLesson(c, h, l) {
-			if pm.videoURL == "" || seen[pm.videoURL] {
-				continue
+	if !onlyFiles {
+		lessons, err := fetchLessons(c, h, co.id)
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range lessons {
+			for _, pm := range resolveLesson(c, h, l) {
+				if pm.videoURL == "" || seen[pm.videoURL] {
+					continue
+				}
+				seen[pm.videoURL] = true
+				entries = append(entries, media(firstNonEmpty(l.title, "lesson"), pm, co, l))
 			}
-			seen[pm.videoURL] = true
-			entries = append(entries, media(firstNonEmpty(l.title, "lesson"), pm, co, l))
 		}
 	}
 	for _, f := range fetchFiles(c, h, co.id) {
+		if onlyFiles && xuelangIsVideoFile(f) {
+			continue
+		}
 		key := firstNonEmpty(f.url, f.token)
 		if key == "" || seen[key] {
 			continue
@@ -114,6 +120,26 @@ func (s *Xuelang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 		return nil, fmt.Errorf("xuelang: no playable m3u8 URL or course files resolved")
 	}
 	return &extractor.MediaInfo{Site: "xuelang", Title: firstNonEmpty(co.title, "xuelang_"+co.id), Entries: entries}, nil
+}
+
+func xuelangOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "4", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
+}
+
+func xuelangIsVideoFile(f fileResource) bool {
+	format := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(firstNonEmpty(f.format, xuelangFormat(f.url)))), ".")
+	switch format {
+	case "mp4", "m3u8", "flv", "m4v", "mov", "avi", "wmv", "mkv", "webm":
+		return true
+	default:
+		return false
+	}
 }
 
 func fetchCourses(c *util.Client, h map[string]string) ([]course, error) {

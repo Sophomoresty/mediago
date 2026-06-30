@@ -346,6 +346,101 @@ func TestGaotuCourseListRequestPayloadPages(t *testing.T) {
 	}
 }
 
+func TestCollectGaotuCoursesMirrorsPythonCourseList(t *testing.T) {
+	got := collectGaotuCourses(map[string]any{
+		"data": map[string]any{
+			"moduleList": []any{
+				map[string]any{
+					"moduleTitle": "我的课程",
+					"moduleCardList": []any{
+						map[string]any{
+							"clazzNumber": "C001",
+							"cardTitle":   "正课",
+							"coreButton":  map[string]any{"price": "12345"},
+						},
+						map[string]any{
+							"clazzNumber": "C001",
+							"cardTitle":   "重复正课",
+						},
+					},
+				},
+				map[string]any{
+					"moduleTitle": "已过期",
+					"moduleCardList": []any{
+						map[string]any{
+							"clazzNumber": "OLD001",
+							"cardTitle":   "过期课",
+						},
+					},
+				},
+			},
+		},
+	})
+	if len(got) != 1 {
+		t.Fatalf("len(courses) = %d, want 1: %#v", len(got), got)
+	}
+	if got[0].ID != "C001" || got[0].Title != "正课" || !got[0].Purchased {
+		t.Fatalf("course parsed incorrectly: %#v", got[0])
+	}
+	if got[0].Price != 123.45 {
+		t.Fatalf("price = %v, want 123.45", got[0].Price)
+	}
+}
+
+func TestGaotuCourseListMediaUsesBrandDomains(t *testing.T) {
+	tests := []struct {
+		name      string
+		rawURL    string
+		wantTitle string
+		wantURL   string
+		wantAPI   string
+		wantPC    string
+	}{
+		{
+			name:      "gaotu",
+			rawURL:    "https://api.gaotu.cn/studyPlatform/v1/unit/clazz/list",
+			wantTitle: "gaotu_courses",
+			wantURL:   "https://www.gaotu.cn/course?clazzNumber=C001",
+			wantAPI:   "api.gaotu.cn",
+			wantPC:    "1",
+		},
+		{
+			name:      "gaotu100",
+			rawURL:    "https://api.gaotu100.com/studyPlatform/v1/unit/clazz/list",
+			wantTitle: "gaotu100_courses",
+			wantURL:   "https://gaotu100.com/course?clazzNumber=C001",
+			wantAPI:   "api.gaotu100.com",
+			wantPC:    "2",
+		},
+		{
+			name:      "gtgz",
+			rawURL:    "https://api.gtgz.cn/studyPlatform/v1/unit/clazz/list",
+			wantTitle: "gtgz_courses",
+			wantURL:   "https://www.gtgz.cn/course?clazzNumber=C001",
+			wantAPI:   "api.gtgz.cn",
+			wantPC:    "8",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gaotuCourseListMedia(endpointsFor(tt.rawURL), []gaotuCourse{{ID: "C001", Title: "正课", Price: 199, Purchased: true}})
+			if got.Title != tt.wantTitle {
+				t.Fatalf("title = %q, want %q", got.Title, tt.wantTitle)
+			}
+			if len(got.Entries) != 1 {
+				t.Fatalf("len(entries) = %d, want 1", len(got.Entries))
+			}
+			extra := got.Entries[0].Extra
+			if extra["url"] != tt.wantURL || extra["api_host"] != tt.wantAPI || extra["p_client"] != tt.wantPC {
+				t.Fatalf("entry extra = %#v", extra)
+			}
+			if extra["price"] != float64(199) || extra["purchased"] != true {
+				t.Fatalf("price/purchased extra mismatch: %#v", extra)
+			}
+		})
+	}
+}
+
 func TestPlaybackURLVariantsMirrorPythonFallbacks(t *testing.T) {
 	raw := "https://api.wenzaizhibo.com/web/playback/getPlaybackInfoV4?room_id=R001&playlist=a%2Fb&sign=s"
 	variants := playbackURLVariants(raw)

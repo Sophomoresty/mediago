@@ -333,8 +333,8 @@ func cookieString(opts *extractor.ExtractOpts) string {
 	seen := map[string]bool{}
 	var parts []string
 	for _, origin := range origins {
-		parsedURL, _ := url.Parse(origin)
-		if parsedURL == nil {
+		parsedURL, err := url.Parse(origin)
+		if err != nil || parsedURL == nil {
 			continue
 		}
 		for _, c := range opts.Cookies.Cookies(parsedURL) {

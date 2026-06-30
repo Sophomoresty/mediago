@@ -240,14 +240,33 @@ func mashibingBuildVideoEntry(c *util.Client, sess *mashibingSession, item mashi
 	manifest = mashibingNormalizeMediaURL(manifest)
 	streamFormat := mashibingStreamFormat(manifest)
 	streamURL := manifest
+	extra := map[string]any{"video_id": item.VideoID, "playSafe": playSafe, "token": token, "polyv_info": info, "pdx_url": mashibingBuildPolyvPDXURL(manifest, info)}
+	var streamExtra map[string]any
+	if streamFormat == "pdx" {
+		pdxURL := mashibingFirstText(mashibingBuildPolyvPDXURL(manifest, info), manifest)
+		pdx, err := shared.PolyvResolvePDX(c, shared.PolyvPDXOptions{VideoID: item.VideoID, PDXURL: pdxURL, PlaySafeToken: token, Headers: polyvHeaders, Secure: sec})
+		if err != nil {
+			return nil, fmt.Errorf("mashibing polyv pdx %s: %w", item.VideoID, err)
+		}
+		streamURL = mashibingM3U8DataURL(pdx.M3U8Text)
+		streamFormat = "m3u8"
+		extra["source_type"] = "polyv_pdx"
+		extra["m3u8_meta"] = pdx.M3U8Meta()
+		streamExtra = map[string]any{"cryptor": "polyv_pdx", "m3u8_meta": pdx.M3U8Meta()}
+		for k, v := range pdx.ExtraMap() {
+			extra[k] = v
+		}
+	}
 	if streamFormat == "m3u8" && token != "" && strings.HasPrefix(manifest, "http") {
 		if text, e := c.GetString(manifest, polyvHeaders); e == nil && strings.HasPrefix(strings.TrimSpace(text), "#EXTM3U") {
 			if rewritten, e := shared.PolyvRewriteM3U8Keys(c, text, token, urlReferer); e == nil {
-				streamURL = rewritten
+				streamURL = mashibingM3U8DataURL(rewritten)
+				extra["m3u8_text"] = rewritten
+				extra["source_type"] = "m3u8_text"
 			}
 		}
 	}
-	return &extractor.MediaInfo{Site: "mashibing", Title: item.Name, Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{streamURL}, Format: streamFormat, Size: item.Size, NeedMerge: streamFormat == "m3u8" || streamFormat == "pdx", Headers: polyvHeaders}}, Extra: map[string]any{"video_id": item.VideoID, "playSafe": playSafe, "token": token, "polyv_info": info, "pdx_url": mashibingBuildPolyvPDXURL(manifest, info)}}, nil
+	return &extractor.MediaInfo{Site: "mashibing", Title: item.Name, Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{streamURL}, Format: streamFormat, Size: item.Size, NeedMerge: streamFormat == "m3u8" || streamFormat == "pdx", Headers: polyvHeaders, Extra: streamExtra}}, Extra: extra}, nil
 }
 
 func mashibingBuildDocumentEntry(c *util.Client, sess *mashibingSession, item mashibingItem) (*extractor.MediaInfo, error) {

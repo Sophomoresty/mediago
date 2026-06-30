@@ -3,6 +3,8 @@ package yangcong
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func loadGoldenFixture(t *testing.T) []byte {
@@ -132,5 +135,57 @@ func TestExtractMock(t *testing.T) {
 	got := goldenFirstPlayableURL(media)
 	if !strings.Contains(got, "https://media.example.com/yangcong/lesson-1.mp4") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
+	}
+}
+
+func TestSelectAddressHonorsSourceQualityModes(t *testing.T) {
+	addresses := []map[string]any{
+		{"format": "mp4", "clarity": "fullHigh", "platform": "pc", "url": "https://cdn.example.com/full.mp4"},
+		{"format": "mp4", "clarity": "high", "platform": "pc", "url": "https://cdn.example.com/high.mp4"},
+		{"format": "mp4", "clarity": "low", "platform": "pc", "url": "https://cdn.example.com/low.mp4"},
+	}
+	if got := selectAddress(addresses, "mp4", "1"); got != "https://cdn.example.com/full.mp4" {
+		t.Fatalf("FHD URL = %q", got)
+	}
+	if got := selectAddress(addresses, "mp4", "2"); got != "https://cdn.example.com/high.mp4" {
+		t.Fatalf("HD URL = %q", got)
+	}
+	if got := selectAddress(addresses, "mp4", "3"); got != "https://cdn.example.com/low.mp4" {
+		t.Fatalf("SD URL = %q", got)
+	}
+}
+
+func TestRewriteHLSM3U8UsesInlineHexKeyAndDataURL(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/master.m3u8"):
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/key?id=key1\"\nseg.ts\n"))
+		case strings.Contains(r.URL.Path, "/videoBase/getHlsEncryptSalt"):
+			salt := base64.StdEncoding.EncodeToString([]byte("salt"))
+			_, _ = w.Write([]byte(`{"data":{"salt":"` + salt + `"}}`))
+		case strings.Contains(r.URL.Path, "/videoBase/getHlsEncryptKey"):
+			_, _ = w.Write(key)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	c := util.NewClient()
+	text := rewriteHLSM3U8(c, map[string]string{}, "https://cdn.example.com/master.m3u8", "video-1")
+	wantKey := "0x" + strings.ToUpper(hex.EncodeToString(key))
+	if !strings.Contains(text, `URI="`+wantKey+`"`) {
+		t.Fatalf("rewritten m3u8 missing inline key %q: %s", wantKey, text)
+	}
+	if !strings.Contains(text, "https://cdn.example.com/seg.ts") {
+		t.Fatalf("rewritten m3u8 did not absolutize segment: %s", text)
+	}
+	if !strings.HasPrefix(yangcongM3U8DataURL(text), "data:application/vnd.apple.mpegurl;base64,") {
+		t.Fatalf("data URL prefix mismatch")
 	}
 }

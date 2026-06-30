@@ -216,7 +216,9 @@ func extractSierPlayInfo(c *util.Client, h map[string]string, resp any, overlay 
 	if len(plays) == 0 {
 		return playInfo{}
 	}
-	sort.SliceStable(plays, func(i, j int) bool { return plays[i].Size > plays[j].Size })
+	sort.SliceStable(plays, func(i, j int) bool {
+		return sierPlayableRank(plays[i]) > sierPlayableRank(plays[j])
+	})
 	play := plays[0]
 	if strings.Contains(strings.ToLower(play.URL), ".m3u8") {
 		if dataURL, text, ok := prepareSierM3U8(c, h, play.URL, requestID, overlay); ok {
@@ -225,6 +227,13 @@ func extractSierPlayInfo(c *util.Client, h map[string]string, resp any, overlay 
 		}
 	}
 	return play
+}
+
+func sierPlayableRank(play playInfo) int64 {
+	if strings.TrimSpace(play.URL) == "" {
+		return -1
+	}
+	return play.Size
 }
 
 func prepareSierM3U8(c *util.Client, h map[string]string, m3u8URL, requestID string, overlay sierOverlay) (string, string, bool) {

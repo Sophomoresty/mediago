@@ -51,6 +51,38 @@ func TestDownloadHLSAES128Fallback(t *testing.T) {
 	}
 }
 
+func TestDownloadHLSAES128FallbackInlineHexKey(t *testing.T) {
+	dir := t.TempDir()
+	engine := New(Opts{OutputDir: dir, Overwrite: true, Concurrency: 2, Retries: 1})
+	engine.ffmpeg = ""
+
+	key := []byte("0123456789abcdef")
+	iv := []byte("abcdef0123456789")
+	seg := encryptHLSSegment(t, []byte("inline-hex-key"), key, iv)
+
+	playlist := fmt.Sprintf(`#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:10
+#EXT-X-KEY:METHOD=AES-128,URI="0x%s",IV=0x%s
+#EXTINF:10,
+%s
+#EXT-X-ENDLIST
+`, fmt.Sprintf("%x", key), fmt.Sprintf("%x", iv), dataURLBase64("application/octet-stream", seg))
+
+	outPath := filepath.Join(dir, "video.mp4")
+	_, err := engine.downloadHLS("video", extractor.Stream{URLs: []string{dataURLText("application/vnd.apple.mpegurl", playlist)}, Format: "m3u8"})
+	if err != nil {
+		t.Fatalf("downloadHLS returned error: %v", err)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(data) != "inline-hex-key" {
+		t.Fatalf("output = %q", string(data))
+	}
+}
+
 func TestDownloadHLSMirrorRetriesNextURL(t *testing.T) {
 	dir := t.TempDir()
 	engine := New(Opts{OutputDir: dir, Overwrite: true, NoProgress: true})

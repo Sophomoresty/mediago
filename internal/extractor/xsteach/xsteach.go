@@ -56,6 +56,7 @@ func (s *Xsteach) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("xsteach requires login cookies")
 	}
+	onlyFiles := xsteachOnlyFilesMode(opts.Quality)
 	c := util.NewClient()
 	c.SetCookieJar(opts.Cookies)
 	h := headers(opts.Cookies)
@@ -90,14 +91,17 @@ func (s *Xsteach) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 	entries, seen := []*extractor.MediaInfo{}, map[string]bool{}
 	for _, p := range periods {
 		for _, fi := range filesFromPeriod(p, course) {
-			if fi.url == "" || seen[fi.url] {
+			if fi.url == "" || seen[fi.url] || (onlyFiles && xsteachIsVideoFile(fi)) {
 				continue
 			}
 			seen[fi.url] = true
 			entries = append(entries, fileMedia(fi))
 		}
+		if onlyFiles {
+			continue
+		}
 		for _, vi := range videosFromPeriod(p, course) {
-			for _, src := range resolveVideoSources(c, h, vi) {
+			for _, src := range resolveVideoSources(c, h, vi, opts.Quality) {
 				if src.URL == "" || seen[src.URL] {
 					continue
 				}
@@ -110,6 +114,40 @@ func (s *Xsteach) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 		return nil, fmt.Errorf("xsteach: no playable qcloud/direct media URL resolved")
 	}
 	return &extractor.MediaInfo{Site: "xsteach", Title: firstNonEmpty(course.title, "xsteach_"+course.id), Entries: entries}, nil
+}
+
+func xsteachOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "4", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
+}
+
+func xsteachTargetQualityRank(quality string) int {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "3", "sd", "480", "480p", "standard", "标清":
+		return 480
+	case "2", "hd", "720", "720p", "高清":
+		return 720
+	case "1", "fhd", "fullhd", "1080", "1080p", "shd", "superhd", "超清", "蓝光":
+		return 1080
+	default:
+		return 1080
+	}
+}
+
+func xsteachIsVideoFile(f xsFile) bool {
+	format := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(firstNonEmpty(f.format, fileFormat("", f.url)))), ".")
+	switch format {
+	case "mp4", "m3u8", "flv", "m4v", "mov", "avi", "wmv", "mkv", "webm":
+		return true
+	default:
+		return false
+	}
 }
 
 func fetchCourses(c *util.Client, h map[string]string) ([]xsCourse, error) {
@@ -243,11 +281,11 @@ type xsSource struct {
 	Extra map[string]any
 }
 
-func resolveVideoSources(c *util.Client, h map[string]string, vi xsVideo) []xsSource {
+func resolveVideoSources(c *util.Client, h map[string]string, vi xsVideo, quality string) []xsSource {
 	out := []xsSource{}
 	play := requestPlayData(c, h, vi)
 	if auth := qcloudAuth(play); auth != nil {
-		if src := qcloudMediaSource(c, auth); src.URL != "" {
+		if src := qcloudMediaSource(c, auth, quality); src.URL != "" {
 			out = append(out, src)
 		}
 	}
@@ -261,7 +299,7 @@ func resolveVideoSources(c *util.Client, h map[string]string, vi xsVideo) []xsSo
 
 func resolveVideo(c *util.Client, h map[string]string, vi xsVideo) []string {
 	out := []string{}
-	for _, src := range resolveVideoSources(c, h, vi) {
+	for _, src := range resolveVideoSources(c, h, vi, "") {
 		out = append(out, src.URL)
 	}
 	return unique(out)
@@ -287,7 +325,7 @@ func apiGet(c *util.Client, api string, params map[string]string, h map[string]s
 }
 
 func qcloudMediaURL(c *util.Client, auth map[string]string) string {
-	if src := qcloudMediaSource(c, auth); src.URL != "" {
+	if src := qcloudMediaSource(c, auth, ""); src.URL != "" {
 		return src.URL
 	}
 	return ""

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,5 +209,96 @@ func TestExtractMock(t *testing.T) {
 	got := firstPlayableURL(info)
 	if !strings.Contains(got, "cdn.example.com/wangxiao233.mp3") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
+	}
+}
+
+func TestMediaUsesPreparedM3U8DataURL(t *testing.T) {
+	raw := "https://cdn.example.com/lesson/index.m3u8"
+	text := "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:1,\nhttps://cdn.example.com/seg.ts\n"
+	entry := media("Lesson", raw, "m3u8", map[string]any{"m3u8_text": text})
+	if entry == nil {
+		t.Fatal("nil media")
+	}
+	stream := entry.Streams["default"]
+	if len(stream.URLs) != 1 {
+		t.Fatalf("stream URLs=%v", stream.URLs)
+	}
+	if !strings.HasPrefix(stream.URLs[0], "data:application/vnd.apple.mpegurl;base64,") {
+		t.Fatalf("stream URL was not m3u8 data URL: %q", stream.URLs[0])
+	}
+	if !stream.NeedMerge {
+		t.Fatal("m3u8 stream NeedMerge=false")
+	}
+	if got, _ := entry.Extra["m3u8_url"].(string); got != raw {
+		t.Fatalf("m3u8_url=%q, want %q", got, raw)
+	}
+	if got, _ := entry.Extra["source_type"].(string); got != "m3u8_text" {
+		t.Fatalf("source_type=%q, want m3u8_text", got)
+	}
+}
+
+func TestQualityFromOptsMapsNumericModes(t *testing.T) {
+	cases := map[string]string{
+		"1":        "fhd",
+		"2":        "hd",
+		"3":        "sd",
+		"4":        "",
+		"pdf":      "",
+		"only_pdf": "",
+		"":         "fhd",
+	}
+	for q, want := range cases {
+		got := qualityFromOpts(&extractor.ExtractOpts{Quality: q})
+		if got != want {
+			t.Fatalf("qualityFromOpts(%q)=%q, want %q", q, got, want)
+		}
+	}
+}
+
+func TestExtractOnlyPDFSkipsVideos(t *testing.T) {
+	var videoHits atomic.Int32
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Host == "japi.233.com" && r.Method == http.MethodGet && r.URL.Path == "/ess-ucs-api/doz/members/userInfo":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"userId":"u1"}}`))
+		case r.Host == "japi.233.com" && r.Method == http.MethodGet && r.URL.Path == "/ess-study-api/learn/do/get-class-tag":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"productId":"1001","currentProductId":"1002","childProductId":"1002","versionProductId":"1002","versionId":"v1","currentTeacherId":"3001","teacherId":"3001","className":"Course","isBuy":1,"isCanLearn":1}}`))
+		case r.Host == "japi.233.com" && r.Method == http.MethodGet && r.URL.Path == "/ess-study-api/learn/do/list-chapter-by-version-id":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"courseChapterRspList":[{"chapterName":"Chapter","chapterDetailRspList":[{"detailName":"Video Lesson","detailId":"d1","mp3Url":"https://cdn.example.com/video.mp3","lectureId":"lec1","title":"Handout.pdf","fileType":"1","detailLectureSize":"1MB"}]}]}}`))
+		case r.Host == "japi.233.com" && r.Method == http.MethodGet && r.URL.Path == "/ess-study-api/learn/do/get-lecture-url":
+			_, _ = w.Write([]byte(`{"code":0,"data":"https://cdn.example.com/handout.pdf"}`))
+		case r.Host == "japi.233.com" && r.Method == http.MethodGet && (r.URL.Path == "/ess-study-api/user-course/product-info" || r.URL.Path == "/ess-study-api/vkt-course/product"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"price":199}}`))
+		case r.Host == "japi.233.com" && r.Method == http.MethodPost && (r.URL.Path == "/ess-study-api/datum-api/page-list" || r.URL.Path == "/ess-study-api/datum-api/do/page-list"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"list":[]}}`))
+		case r.Host == "japi.233.com" && (strings.HasPrefix(r.URL.Path, "/ess-bms-api/vod-play") || strings.HasPrefix(r.URL.Path, "/ess-open-api/vod")):
+			videoHits.Add(1)
+			http.Error(w, "video endpoint must not be requested in only-pdf mode", http.StatusTeapot)
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	jar := newJar()
+	setCookies(t, jar, "https://wx.233.com/", &http.Cookie{Name: "clientauthentication", Value: "wx233-token"})
+
+	ext, err := extractor.Match("https://wx.233.com/study?productId=1001&childProductId=1002&teacherId=3001&domain=aq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ext.Extract("https://wx.233.com/study?productId=1001&childProductId=1002&teacherId=3001&domain=aq", &extractor.ExtractOpts{Cookies: jar, Quality: "4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits := videoHits.Load(); hits != 0 {
+		t.Fatalf("video endpoint hits=%d, want 0", hits)
+	}
+	got := firstPlayableURL(info)
+	if !strings.Contains(got, "cdn.example.com/handout.pdf") {
+		t.Fatalf("playable URL %q does not contain only-pdf handout", got)
+	}
+	if strings.Contains(got, "video.mp3") {
+		t.Fatalf("only-pdf returned video URL: %q", got)
 	}
 }

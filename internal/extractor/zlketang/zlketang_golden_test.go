@@ -2,7 +2,11 @@ package zlketang
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -14,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/util"
 )
 
 func loadGoldenFixture(t *testing.T) []byte {
@@ -133,4 +138,102 @@ func TestExtractMock(t *testing.T) {
 	if !strings.Contains(got, "https://media.example.com/zlketang/lesson-1.m3u8") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
+}
+
+func TestOnlyFilesModeSkipsVideoEntries(t *testing.T) {
+	fixture := loadGoldenFixture(t)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(fixture)
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+
+	media, err := (&Zlketang{}).Extract("https://www.zlketang.com/wxpub/page/zl_course/commodity.html?product_id=1001&course_id=2001", &extractor.ExtractOpts{Cookies: jar, Quality: "2"})
+	if err != nil {
+		t.Fatalf("Extract only-files returned error: %v", err)
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want only file entry", len(media.Entries))
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://media.example.com/zlketang/handout.pdf" {
+		t.Fatalf("playable URL = %q, want handout PDF", got)
+	}
+}
+
+func TestLoadFinalQCloudM3U8RewritesEncryptedKey(t *testing.T) {
+	overlayKey := "00112233445566778899aabbccddeeff"
+	overlayIV := "0102030405060708090a0b0c0d0e0f10"
+	clearKey := []byte("0123456789abcdef")
+	encryptedKey := aesCBCEncryptNoPad(t, clearKey, overlayKey, overlayIV)
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/master.m3u8":
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nvariant.m3u8\n"))
+		case "/variant.m3u8":
+			_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:1,\nseg.ts\n"))
+		case "/key.bin":
+			if got := r.URL.Query().Get("token"); got != "drm-token" {
+				t.Errorf("key token = %q, want drm-token", got)
+			}
+			_, _ = w.Write(encryptedKey)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := &zlContext{c: util.NewClient(), headers: map[string]string{"User-Agent": "test-agent"}}
+	variantURL, text := ctx.loadFinalQCloudM3U8(zlQCloudPlayInfo{
+		MasterURL:  srv.URL + "/master.m3u8",
+		DRMToken:   "drm-token",
+		OverlayKey: overlayKey,
+		OverlayIV:  overlayIV,
+	})
+	if variantURL != srv.URL+"/variant.m3u8" {
+		t.Fatalf("variantURL = %q, want variant", variantURL)
+	}
+	wantKey := `URI="data:application/octet-stream;base64,` + base64.StdEncoding.EncodeToString(clearKey) + `"`
+	if !strings.Contains(text, wantKey) {
+		t.Fatalf("rewritten m3u8 missing decrypted key %q in:\n%s", wantKey, text)
+	}
+	if !strings.Contains(text, srv.URL+"/seg.ts") {
+		t.Fatalf("rewritten m3u8 missing absolute segment:\n%s", text)
+	}
+	if !strings.HasPrefix(zlM3U8DataURL(text), "data:application/vnd.apple.mpegurl;base64,") {
+		t.Fatalf("m3u8 text was not converted to data URL")
+	}
+}
+
+func aesCBCEncryptNoPad(t *testing.T, plain []byte, keyHex, ivHex string) []byte {
+	t.Helper()
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		t.Fatalf("decode key: %v", err)
+	}
+	iv, err := hex.DecodeString(ivHex)
+	if err != nil {
+		t.Fatalf("decode iv: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("aes.NewCipher: %v", err)
+	}
+	if len(plain)%aes.BlockSize != 0 {
+		t.Fatalf("plain length %d is not block aligned", len(plain))
+	}
+	out := make([]byte, len(plain))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, plain)
+	return out
 }

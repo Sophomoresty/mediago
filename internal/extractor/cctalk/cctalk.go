@@ -381,9 +381,9 @@ func mediaFromMap(a *apiClient, item map[string]any, fallbackTitle string) (*ext
 
 func parseIDs(raw string) ids {
 	var out ids
-	u, _ := url.Parse(raw)
+	u, err := url.Parse(raw)
 	path := raw
-	if u != nil {
+	if err == nil && u != nil {
 		path = u.Path
 		q := u.Query()
 		out.CourseID = firstNonEmpty(q.Get("courseId"), q.Get("course_id"), q.Get("cid"))

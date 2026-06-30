@@ -40,7 +40,7 @@ type Unipus struct{}
 func (u *Unipus) Patterns() []string { return patterns }
 
 var (
-	cidRe       = regexp.MustCompile(`(?:/courses?|[?&](?:cid|courseId)=)(\d+)`)
+	cidRe       = regexp.MustCompile(`(?:/courses?/|[?&](?:cid|courseId)=)(\d+)`)
 	iframeRe    = regexp.MustCompile(`(?is)<iframe[^>]+src=["']([^"']+)`)
 	liRe        = regexp.MustCompile(`(?is)<li\b([^>]*)>(.*?)</li>`)
 	tagRe       = regexp.MustCompile(`(?is)<[^>]+>`)
@@ -90,7 +90,7 @@ func (u *Unipus) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 			kind = "files"
 		}
 		for _, src := range sources[kind] {
-			entries = append(entries, makeEntry(task, src, cookie))
+			entries = append(entries, makeEntry(c, task, src, cookie))
 		}
 	}
 	if len(entries) == 0 {
@@ -139,13 +139,16 @@ func requestText(c *util.Client, raw, ref, cookie string) (string, string, error
 		return "", "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", err
-	}
 	finalURL := absURL(raw, origin)
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
+	}
+	if resp.StatusCode >= 400 {
+		return "", finalURL, fmt.Errorf("HTTP %d from %s", resp.StatusCode, raw)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", finalURL, err
 	}
 	return string(b), finalURL, nil
 }
@@ -243,10 +246,12 @@ func taskPreviewURL(fragment, cid, taskID string) string {
 		if attrs["data-url"] == "" || !strings.Contains(attrs["data-url"], "/task/") {
 			continue
 		}
-		if attrs["href"] != "" {
-			return absURL(attrs["href"], origin)
+		if href := absURL(attrs["href"], origin); href != "" {
+			return href
 		}
-		return absURL(attrs["data-url"], origin)
+		if dataURL := absURL(attrs["data-url"], origin); dataURL != "" {
+			return dataURL
+		}
 	}
 	return fmt.Sprintf(content_preview, url.PathEscape(cid), url.PathEscape(taskID))
 }
@@ -342,9 +347,9 @@ func appendSource(out sourceSet, u, title string) {
 	}
 }
 
-func makeEntry(task taskItem, src source, cookie string) *extractor.MediaInfo {
+func makeEntry(c *util.Client, task taskItem, src source, cookie string) *extractor.MediaInfo {
 	title := sanitizeName(first(src.Title, task.EntryName, task.TaskName, task.TaskID))
-	format := pickFormat(src.URL)
+	streamURL, format, streamExtra, extra := prepareSource(c, src.URL, first(task.PreviewURL, referer), cookie)
 	quality := "best"
 	if task.Kind == "file" {
 		quality = "file"
@@ -353,7 +358,10 @@ func makeEntry(task taskItem, src source, cookie string) *extractor.MediaInfo {
 	if cookie != "" {
 		headers["Cookie"] = cookie
 	}
-	return &extractor.MediaInfo{Site: "Unipus", Title: title, Streams: map[string]extractor.Stream{quality: {Quality: quality, URLs: []string{src.URL}, Format: format, Headers: headers}}, Extra: map[string]any{"task_id": task.TaskID, "task_name": task.TaskName, "section": task.Section, "type": task.Kind}}
+	for k, v := range map[string]any{"task_id": task.TaskID, "task_name": task.TaskName, "section": task.Section, "type": task.Kind} {
+		extra[k] = v
+	}
+	return &extractor.MediaInfo{Site: "Unipus", Title: title, Streams: map[string]extractor.Stream{quality: {Quality: quality, URLs: []string{streamURL}, Format: format, NeedMerge: format == "m3u8", Headers: headers, Extra: streamExtra}}, Extra: extra}
 }
 
 func extractTitle(body, cid string) string {
@@ -499,6 +507,10 @@ func absURL(raw, base string) string {
 }
 
 func pickFormat(raw string) string {
+	low := strings.ToLower(strings.TrimSpace(raw))
+	if strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(low, "#extm3u") {
+		return "m3u8"
+	}
 	u, err := url.Parse(raw)
 	path := raw
 	if err == nil {

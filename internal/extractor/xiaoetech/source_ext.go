@@ -235,7 +235,30 @@ func richtextChildrenFromDetail(c *util.Client, jar http.CookieJar, ctx xetCtx, 
 			fetchFirstTextURL(c, jar, ctx, root["data"]),
 		)
 	}
-	return collectRichtextItems(c, jar, ctx, htmlText, it.title, it.id)
+	out := []xetItem{}
+	if htmlItem := richtextHTMLItem(ctx, it, htmlText); htmlItem.id != "" {
+		out = append(out, htmlItem)
+	}
+	out = append(out, collectRichtextItems(c, jar, ctx, htmlText, it.title, it.id)...)
+	return uniqueItems(out)
+}
+
+func richtextHTMLItem(ctx xetCtx, it xetItem, htmlText string) xetItem {
+	if strings.TrimSpace(htmlText) == "" {
+		return xetItem{}
+	}
+	raw := copyMap(it.raw)
+	raw["url"] = "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(htmlText))
+	raw["_parent_id"] = it.id
+	raw["_source_type"] = "html_text"
+	return xetItem{
+		id:     firstNonEmpty(it.id, ctx.cid) + "_html",
+		title:  cleanXETTitle(firstNonEmpty(it.title, ctx.title, it.id, "图文")),
+		typ:    "file",
+		appID:  firstNonEmpty(it.appID, ctx.appID),
+		userID: firstNonEmpty(it.userID, ctx.userID),
+		raw:    raw,
+	}
 }
 
 func liveTextRichtextChildren(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) []xetItem {

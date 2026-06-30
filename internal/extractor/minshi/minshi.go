@@ -3,6 +3,7 @@ package minshi
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,6 +115,11 @@ func (s *Minshi) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		extra := map[string]any{"course_table_id": le.TableID, "video_id": vid, "playsafe": play.Token}
 		if manifest != "" {
 			extra["m3u8_manifest"] = manifest
+			if strings.HasPrefix(strings.TrimSpace(manifest), "#EXTM3U") {
+				streamURL = minshiM3U8DataURL(manifest)
+				extra["m3u8_text"] = manifest
+				extra["source_type"] = "m3u8_text"
+			}
 		}
 		format := formatOf(streamURL)
 		entries = append(entries, &extractor.MediaInfo{Site: "minshi", Title: name, Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{streamURL}, Format: format, NeedMerge: format == "m3u8", Headers: h}}, Extra: extra})
@@ -173,6 +179,9 @@ func resolvePolyv(c *util.Client, vid string, token string, h map[string]string)
 	}
 	if strings.HasPrefix(m3u8, "http") {
 		return m3u8, "", nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(m3u8), "#EXTM3U") {
+		return minshiM3U8DataURL(m3u8), m3u8, nil
 	}
 	return m3u8, "", nil
 }
@@ -673,8 +682,13 @@ func absURL(u string) string {
 	return strings.TrimRight(origin, "/") + "/" + strings.TrimLeft(u, "/")
 }
 func formatOf(u string) string {
-	if strings.Contains(strings.ToLower(u), ".m3u8") {
+	low := strings.ToLower(strings.TrimSpace(u))
+	if strings.Contains(low, ".m3u8") || strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(low, "#extm3u") {
 		return "m3u8"
 	}
 	return "mp4"
+}
+
+func minshiM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
 }

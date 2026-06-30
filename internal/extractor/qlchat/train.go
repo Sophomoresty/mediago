@@ -280,10 +280,10 @@ func resolveTrainItem(c *util.Client, h map[string]string, st trainState, item t
 		return nil, fmt.Errorf("qianliao train: empty media URL for topicId %s", item.TopicID)
 	}
 	mediaURL := first(playURL, audioURL)
-	stream := extractor.Stream{Quality: "best", URLs: []string{mediaURL}, Format: pickFormat(mediaURL), Headers: map[string]string{"Referer": trainReferer}}
+	format := pickFormat(mediaURL)
+	stream := extractor.Stream{Quality: "best", URLs: []string{mediaURL}, Format: format, NeedMerge: format == "m3u8", Headers: map[string]string{"Referer": trainReferer}}
 	if playURL != "" && audioURL != "" {
 		stream.AudioURL = audioURL
-		stream.NeedMerge = stream.Format == "m3u8"
 	}
 	return &extractor.MediaInfo{
 		Site:    "qlchat",

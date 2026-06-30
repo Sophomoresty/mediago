@@ -203,3 +203,22 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestExtractSierPlayInfoSkipsEmptyHigherSizeCandidate(t *testing.T) {
+	play := extractSierPlayInfo(util.NewClient(), nil, map[string]any{
+		"data": []any{
+			map[string]any{"playUrl": "", "size": 999999},
+			map[string]any{"playUrl": "https://cdn.example.com/sier.mp4", "size": 1},
+		},
+	}, sierOverlay{})
+	if play.URL != "https://cdn.example.com/sier.mp4" {
+		t.Fatalf("play URL = %q, want non-empty candidate", play.URL)
+	}
+}
+
+func TestPickFormatRecognizesSierM3U8DataURL(t *testing.T) {
+	got := pickFormat("data:application/vnd.apple.mpegurl;base64,I0VYVE0zVQo=")
+	if got != "m3u8" {
+		t.Fatalf("pickFormat(data m3u8) = %q, want m3u8", got)
+	}
+}

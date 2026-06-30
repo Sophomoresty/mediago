@@ -116,6 +116,16 @@ func fetchCourseChapterPayload(c *util.Client, base string, h map[string]string,
 	if err == nil && len(extractCourseLeaves(root)) > 0 {
 		return root, nil
 	}
+
+	// Python retries the chapter API once after joining a free SKU. The first
+	// chapter request can fail with 4xx before a free course is enrolled, so keep
+	// this before the public course-detail fallback to preserve the source order.
+	if joinFreeCourse(c, base, h, sign, cid) {
+		if joinedRoot, joinedErr := getJSONMap(c, chapterURL, h); joinedErr == nil && len(extractCourseLeaves(joinedRoot)) > 0 {
+			return joinedRoot, nil
+		}
+	}
+
 	detailURL := fmt.Sprintf("%s/api/v1/lms/product/get_course_detail/?cid=%s", base, url.QueryEscape(cid))
 	fallback, fallbackErr := getJSONMap(c, detailURL, h)
 	if fallbackErr == nil && len(extractCourseLeaves(fallback)) > 0 {
@@ -125,6 +135,69 @@ func fetchCourseChapterPayload(c *util.Client, base string, h map[string]string,
 		return nil, fmt.Errorf("course/chapter: %w", err)
 	}
 	return root, nil
+}
+
+func joinFreeCourse(c *util.Client, base string, h map[string]string, sign, cid string) bool {
+	productID, skuID, err := getFreeProductSKU(c, base, h, sign, cid)
+	if err != nil || productID == "" || skuID == "" {
+		return false
+	}
+	joinURL := fmt.Sprintf("%s/api/v1/lms/order/entries_free_sku/%s/?sid=%s", base, url.PathEscape(productID), url.QueryEscape(skuID))
+	root, err := getJSONMap(c, joinURL, h)
+	if err != nil {
+		return false
+	}
+	if success, ok := root["success"].(bool); ok {
+		return success
+	}
+	if success, ok := anyMap(root["data"])["success"].(bool); ok {
+		return success
+	}
+	code := strings.TrimSpace(jsonScalarString(root["code"]))
+	return code == "0" || code == "200"
+}
+
+func getFreeProductSKU(c *util.Client, base string, h map[string]string, sign, cid string) (string, string, error) {
+	productURL := fmt.Sprintf("%s/api/v1/lms/product/sku_pay_detail/?cid=%s&sign=%s", base, url.QueryEscape(cid), url.QueryEscape(sign))
+	root, err := getJSONMap(c, productURL, h)
+	if err != nil {
+		return "", "", err
+	}
+	data := firstMap(root["data"], root)
+	productID := jsonScalarString(firstPresent(data, "product_id", "productId"))
+	for _, raw := range firstList(data["sku_info"], data["skuInfo"], data["skus"], data["sku_list"], data["skuList"]) {
+		sku := anyMap(raw)
+		if len(sku) == 0 || !isFreeSKU(sku) {
+			continue
+		}
+		skuID := jsonScalarString(firstPresent(sku, "sku_id", "skuId", "id"))
+		if skuID != "" {
+			return productID, skuID, nil
+		}
+	}
+	return productID, "", nil
+}
+
+func isFreeSKU(sku map[string]any) bool {
+	for _, key := range []string{"current_price", "currentPrice", "price", "sale_price", "salePrice"} {
+		if v, ok := sku[key]; ok && parsePriceNumber(v) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func parsePriceNumber(v any) float64 {
+	s := strings.TrimSpace(jsonScalarString(v))
+	if s == "" {
+		return -1
+	}
+	s = strings.TrimPrefix(strings.ReplaceAll(s, ",", ""), "¥")
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return -1
+	}
+	return f
 }
 
 func getJSONMap(c *util.Client, apiURL string, h map[string]string) (map[string]any, error) {
@@ -204,7 +277,7 @@ func looksPlayableNode(node map[string]any) bool {
 	return false
 }
 
-func resolveLeafSource(c *util.Client, base string, h map[string]string, sign, cid, leafID string) *leafSource {
+func resolveLeafSource(c *util.Client, base string, h map[string]string, sign, cid, leafID string, onlyFiles bool) *leafSource {
 	apiURL := fmt.Sprintf("%s/api/v1/lms/learn/leaf_info/%s/%s/?sign=%s", base, url.PathEscape(cid), url.PathEscape(leafID), url.QueryEscape(sign))
 	root, err := getJSONMap(c, apiURL, h)
 	if err != nil {
@@ -212,7 +285,7 @@ func resolveLeafSource(c *util.Client, base string, h map[string]string, sign, c
 	}
 	src := sourceFromLeafPayload(root)
 	ccid := firstNonEmpty(findFirstKey(root, "ccid", "cc_id"), findFirstKey(root, "video_id", "videoId"))
-	if ccid != "" {
+	if ccid != "" && !onlyFiles {
 		if variants := fetchPlayURLVariants(c, base, h, ccid); len(variants) > 0 {
 			src.Variants = append(src.Variants, variants...)
 		}
@@ -275,7 +348,7 @@ func fetchPlayURLVariants(c *util.Client, base string, h map[string]string, ccid
 	return dedupeVariants(variants)
 }
 
-func mediaFromSource(base string, h map[string]string, title, leafID string, src *leafSource) []*extractor.MediaInfo {
+func mediaFromSource(base string, h map[string]string, title, leafID string, src *leafSource, onlyFiles bool) []*extractor.MediaInfo {
 	if src == nil || src.empty() {
 		return nil
 	}
@@ -285,19 +358,21 @@ func mediaFromSource(base string, h map[string]string, title, leafID string, src
 	}
 	var out []*extractor.MediaInfo
 	streams := map[string]extractor.Stream{}
-	for _, v := range src.Variants {
-		if v.URL == "" {
-			continue
+	if !onlyFiles {
+		for _, v := range src.Variants {
+			if v.URL == "" {
+				continue
+			}
+			key := firstNonEmpty(v.Quality, v.Format, "default")
+			for i := 2; streams[key].URLs != nil; i++ {
+				key = fmt.Sprintf("%s_%d", firstNonEmpty(v.Quality, v.Format, "default"), i)
+			}
+			streams[key] = extractor.Stream{Quality: key, URLs: []string{v.URL}, Format: firstNonEmpty(v.Format, pickFormat(v.URL)), Size: v.Size, NeedMerge: v.NeedMerge || pickFormat(v.URL) == "m3u8", Headers: headers}
 		}
-		key := firstNonEmpty(v.Quality, v.Format, "default")
-		for i := 2; streams[key].URLs != nil; i++ {
-			key = fmt.Sprintf("%s_%d", firstNonEmpty(v.Quality, v.Format, "default"), i)
+		if len(streams) == 0 && src.URL != "" {
+			format := pickFormat(src.URL)
+			streams["default"] = extractor.Stream{Quality: "best", URLs: []string{src.URL}, Format: format, Size: src.Size, NeedMerge: format == "m3u8", Headers: headers}
 		}
-		streams[key] = extractor.Stream{Quality: key, URLs: []string{v.URL}, Format: firstNonEmpty(v.Format, pickFormat(v.URL)), Size: v.Size, NeedMerge: v.NeedMerge || pickFormat(v.URL) == "m3u8", Headers: headers}
-	}
-	if len(streams) == 0 && src.URL != "" {
-		format := pickFormat(src.URL)
-		streams["default"] = extractor.Stream{Quality: "best", URLs: []string{src.URL}, Format: format, Size: src.Size, NeedMerge: format == "m3u8", Headers: headers}
 	}
 	if len(streams) == 0 && src.HTML != "" {
 		u := "data:text/html;charset=utf-8," + url.PathEscape(src.HTML)
@@ -651,7 +726,10 @@ func fileExt(u string) string {
 		return ext
 	}
 	if mt := strings.TrimSpace(mime.TypeByExtension(path.Ext(rawPath))); mt != "" {
-		return strings.Split(mt, "/")[1]
+		parts := strings.SplitN(mt, "/", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+			return strings.TrimSpace(parts[1])
+		}
 	}
 	return "bin"
 }

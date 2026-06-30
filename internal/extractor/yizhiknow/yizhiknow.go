@@ -51,10 +51,11 @@ type Yizhiknow struct{}
 func (s *Yizhiknow) Patterns() []string { return patterns }
 
 type yzContext struct {
-	c       *util.Client
-	token   string
-	cid     string
-	headers map[string]string
+	c         *util.Client
+	token     string
+	cid       string
+	onlyFiles bool
+	headers   map[string]string
 }
 
 type yzLesson struct {
@@ -73,7 +74,7 @@ func (s *Yizhiknow) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	if cid == "" {
 		return nil, fmt.Errorf("yizhiknow: cannot parse curriculum id from URL")
 	}
-	ctx := &yzContext{c: util.NewClient(), token: tokenFromJar(opts.Cookies), cid: cid}
+	ctx := &yzContext{c: util.NewClient(), token: tokenFromJar(opts.Cookies), cid: cid, onlyFiles: yizhiknowOnlyFilesMode(opts.Quality)}
 	ctx.c.SetCookieJar(opts.Cookies)
 	ctx.headers = ctx.baseHeaders()
 	if ctx.token == "" {
@@ -109,6 +110,16 @@ func (s *Yizhiknow) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 		return nil, fmt.Errorf("yizhiknow: no media URL resolved")
 	}
 	return &extractor.MediaInfo{Site: "yizhiknow", Title: cleanTitle(title), Entries: entries}, nil
+}
+
+func yizhiknowOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "2", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseCID(raw string) string {
@@ -384,77 +395,79 @@ func (x *yzContext) resolveLesson(lesson yzLesson) []*extractor.MediaInfo {
 		lessonType = t
 	}
 
-	// 1. Resolve media (video/audio).
-	var resource map[string]any
-	switch {
-	case lessonType == 1 || lessonType == 2:
-		// Video-type: request lesson resource API.
-		resourceResp, err := x.requestJSON("GET", lessonResourcePath, map[string]string{
-			"curriculum_id": x.cid,
-			"lesson_id":     lesson.ID,
-			"source":        "web",
-			"platform":      platformType,
-		}, nil)
-		if err == nil {
-			resource = asMap(resourceResp["data"])
-		}
-		if len(resource) == 0 {
+	if !x.onlyFiles {
+		// 1. Resolve media (video/audio).
+		var resource map[string]any
+		switch {
+		case lessonType == 1 || lessonType == 2:
+			// Video-type: request lesson resource API.
+			resourceResp, err := x.requestJSON("GET", lessonResourcePath, map[string]string{
+				"curriculum_id": x.cid,
+				"lesson_id":     lesson.ID,
+				"source":        "web",
+				"platform":      platformType,
+			}, nil)
+			if err == nil {
+				resource = asMap(resourceResp["data"])
+			}
+			if len(resource) == 0 {
+				resource = lesson.Raw
+			}
+		case lessonType == 8:
+			// Live-type: get vid from stream_vod, call live resource API.
+			streamVod := asMap(lesson.Raw["stream_vod"])
+			vid := firstString(streamVod, "vid_x", "vid")
+			if vid != "" {
+				if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
+					resource = live
+				}
+			}
+			if len(resource) == 0 {
+				resource = lesson.Raw
+			}
+		default:
+			// Other types: use raw lesson data directly.
 			resource = lesson.Raw
 		}
-	case lessonType == 8:
-		// Live-type: get vid from stream_vod, call live resource API.
-		streamVod := asMap(lesson.Raw["stream_vod"])
-		vid := firstString(streamVod, "vid_x", "vid")
-		if vid != "" {
-			if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
-				resource = live
-			}
-		}
-		if len(resource) == 0 {
-			resource = lesson.Raw
-		}
-	default:
-		// Other types: use raw lesson data directly.
-		resource = lesson.Raw
-	}
 
-	urls := collectMediaCandidates(resource, lesson.Type)
+		urls := collectMediaCandidates(resource, lesson.Type)
 
-	// Fallback: if no URLs found and not already tried live, check for vid.
-	if len(urls) == 0 && lessonType != 8 {
-		streamVod := asMap(lesson.Raw["stream_vod"])
-		if vid := firstString(streamVod, "vid_x", "vid"); vid != "" {
-			if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
-				urls = collectMediaCandidates(live, lesson.Type)
-			}
-		}
-		// Also try vid keys at top level of resource.
-		if len(urls) == 0 {
-			if vid := firstString(resource, "vid_x", "vid", "video_id"); vid != "" {
+		// Fallback: if no URLs found and not already tried live, check for vid.
+		if len(urls) == 0 && lessonType != 8 {
+			streamVod := asMap(lesson.Raw["stream_vod"])
+			if vid := firstString(streamVod, "vid_x", "vid"); vid != "" {
 				if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
 					urls = collectMediaCandidates(live, lesson.Type)
 				}
 			}
+			// Also try vid keys at top level of resource.
+			if len(urls) == 0 {
+				if vid := firstString(resource, "vid_x", "vid", "video_id"); vid != "" {
+					if live, err := x.requestData(liveResourcePath, map[string]string{"vid_x": vid}, nil, "GET"); err == nil {
+						urls = collectMediaCandidates(live, lesson.Type)
+					}
+				}
+			}
 		}
-	}
 
-	// Emit first working media URL (source returns on first success).
-	if len(urls) > 0 {
-		u := urls[0]
-		format := pickFormat(u)
-		stream := extractor.Stream{
-			Quality: "best",
-			URLs:    []string{u},
-			Format:  format,
-			Headers: map[string]string{"Referer": refererURL},
+		// Emit first working media URL (source returns on first success).
+		if len(urls) > 0 {
+			u := urls[0]
+			format := pickFormat(u)
+			stream := extractor.Stream{
+				Quality: "best",
+				URLs:    []string{u},
+				Format:  format,
+				Headers: map[string]string{"Referer": refererURL},
+			}
+			stream.NeedMerge = format == "m3u8"
+			entries = append(entries, &extractor.MediaInfo{
+				Site:    "yizhiknow",
+				Title:   lesson.Title,
+				Streams: map[string]extractor.Stream{"default": stream},
+				Extra:   map[string]any{"lesson_id": lesson.ID},
+			})
 		}
-		stream.NeedMerge = format == "m3u8"
-		entries = append(entries, &extractor.MediaInfo{
-			Site:    "yizhiknow",
-			Title:   lesson.Title,
-			Streams: map[string]extractor.Stream{"default": stream},
-			Extra:   map[string]any{"lesson_id": lesson.ID},
-		})
 	}
 
 	// 2. Resolve materials (courseware/attachments).

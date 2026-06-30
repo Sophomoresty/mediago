@@ -209,4 +209,29 @@ func TestExtractMock(t *testing.T) {
 	if !strings.Contains(got, "cdn.example.com/renrenjiang.m3u8") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
+	stream := info.Streams["best"]
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream format/merge = %q/%v, want m3u8/true", stream.Format, stream.NeedMerge)
+	}
+}
+
+func TestPickQCloudURLPrefersLargestPlayableAndMarksM3U8(t *testing.T) {
+	info := pickQCloudURL(map[string]any{
+		"media": map[string]any{
+			"basicInfo": map[string]any{"size": float64(4096)},
+			"transcodeInfo": map[string]any{
+				"transcodeList": []any{
+					map[string]any{"url": "https://cdn.example.com/low.mp4", "size": float64(1024)},
+					map[string]any{"url": "https://cdn.example.com/high.m3u8?token=1", "size": float64(0)},
+				},
+			},
+			"sourceVideo": map[string]any{"url": "https://cdn.example.com/source.mp4", "size": float64(2048)},
+		},
+	})
+	if info.URL != "https://cdn.example.com/source.mp4" || info.Size != 2048 {
+		t.Fatalf("pickQCloudURL = %#v, want largest non-zero source mp4", info)
+	}
+	if pickFormat("https://cdn.example.com/high.m3u8?token=1") != "m3u8" {
+		t.Fatalf("pickFormat did not recognize m3u8 with query")
+	}
 }

@@ -2,7 +2,9 @@
 //
 // Source: Icve_Material.pyc.1shot.cdc.py
 // API: zyk.icve.com.cn/prod-api/website/resource/detail/info for material details,
-//      reuses Profession's source resolution for download URLs.
+//
+//	reuses Profession's source resolution for download URLs.
+//
 // Auth: requires Bearer token (NeedAuth: true).
 package icve
 
@@ -82,9 +84,10 @@ func newMaterialCtx(jar http.CookieJar, mode int) *materialCtx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            "https://zyk.icve.com.cn",
-		"cookie":             cookieHeader(jar, []string{"https://zyk.icve.com.cn/", referer + "/", "https://www.icve.com.cn/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://zyk.icve.com.cn/", "https://www.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
+	_ = ensureICVEBearerAuth(c, headers, profURLPassLogin, profURLCheckLogin)
 	return &materialCtx{c: c, headers: headers, mode: mode}
 }
 
@@ -106,7 +109,9 @@ func parseMaterialCID(raw string) string {
 }
 
 // loadAndBuild fetches material detail and resolves download URL.
-// Source: Icve_Material._get_infos – single resource per URL.
+// Source: Icve_Material inherits Icve_Profession download resolution; material
+// detail responses may expose direct file fields, nested resource/content
+// objects, VOS resource lists, or a JSON-encoded fileUrl payload.
 func (x *materialCtx) loadAndBuild() (*extractor.MediaInfo, error) {
 	body, err := x.c.GetString(fmt.Sprintf(materialURLDetail, url.QueryEscape(x.cid)), x.headers)
 	if err != nil {
@@ -114,65 +119,57 @@ func (x *materialCtx) loadAndBuild() (*extractor.MediaInfo, error) {
 	}
 	root := parseJSONMap(body)
 	data := mapAt(root, "data")
+	if len(data) == 0 {
+		data = root
+	}
 
-	name := cleanTitle(firstNonEmpty(str(data["name"]), str(data["title"]), str(data["resourceName"])))
+	name := cleanTitle(firstNonEmpty(
+		str(data["name"]),
+		str(data["title"]),
+		str(data["resourceName"]),
+		str(data["fileName"]),
+		str(data["filename"]),
+		str(data["resName"]),
+	))
 	if name != "" {
 		x.title = name
 	}
 
-	// Try to get file URL from various fields
-	fileURL := firstNonEmpty(
+	fileType := normalizeICVEFileType(firstNonEmpty(
+		str(data["fileType"]),
+		str(data["type"]),
+		str(data["resourceType"]),
+		str(data["suffix"]),
+		str(data["fileSuffix"]),
+	))
+	resource := firstNonEmpty(
 		str(data["fileUrl"]),
+		str(data["fileInfo"]),
+		str(data["resourceUrl"]),
+		str(data["resource"]),
 		str(data["ossOriUrl"]),
 		str(data["downloadUrl"]),
+		str(data["downloadurl"]),
 		str(data["url"]),
 	)
-
-	// If fileUrl is JSON (like in Profession), parse it
-	if strings.HasPrefix(fileURL, "{") {
-		innerURL := regexExtract(`"ossOriUrl"\s*:\s*"(.*?)"`, fileURL)
-		if innerURL == "" {
-			innerURL = regexExtract(`"fileUrl"\s*:\s*"(.*?)"`, fileURL)
-		}
-		if innerURL != "" {
-			fileURL = innerURL
-		}
+	if resource == "" {
+		resource = jsonText(firstNonEmptyMap(data, "cloudFileInfo", "file"))
 	}
-
-	// Try transcoded video URL via fileGenUrl + upload status
-	fileGenURL := firstNonEmpty(str(data["fileGenUrl"]), str(data["ossGenUrl"]))
-	urlShort := firstNonEmpty(str(data["urlShort"]), str(data["content"]))
-	fileType := strings.ToLower(strings.TrimRight(firstNonEmpty(str(data["fileType"]), str(data["type"])), "x"))
-
-	if fileGenURL != "" && urlShort != "" && isVideoType(fileType) {
-		statusBody, err := x.c.GetString(fmt.Sprintf(urlSourceStatus, strings.TrimLeft(urlShort, "/")), x.headers)
-		if err == nil {
-			status := parseJSONMap(statusBody)
-			args := mapAt(status, "args")
-			ac := &aiCtx{c: x.c, headers: x.headers, mode: x.mode}
-			u := ac.selectTranscodedURL(fileGenURL, "mp4", map[string]any{"args": args})
-			if u != "" {
-				fileURL = u
-			}
-		}
-	}
-
+	fileURL, ext, kind := x.resolveResourcePayload(resource, data, fileType)
 	if fileURL == "" {
 		return nil, fmt.Errorf("icve_material: no download URL found")
 	}
 
-	// Strip query params
 	if idx := strings.LastIndex(fileURL, "?"); idx > 0 {
 		fileURL = fileURL[:idx]
 	}
-
-	isVideo := isVideoType(fileType) || isVideoType(pickExt(fileURL))
-	if isVideo && x.mode == ONLY_PDF {
+	if kind == "video" && x.mode == ONLY_PDF {
 		return nil, fmt.Errorf("icve_material: video skipped in PDF-only mode")
 	}
-
-	ext := pickExt(fileURL)
 	if ext == "" {
+		ext = pickExt(fileURL)
+	}
+	if ext == "" && fileType != "" && !isVideoType(fileType) {
 		ext = fileType
 	}
 	if ext == "" {
@@ -184,12 +181,26 @@ func (x *materialCtx) loadAndBuild() (*extractor.MediaInfo, error) {
 		Title: firstNonEmpty(name, x.cid),
 		Streams: map[string]extractor.Stream{
 			ext: {
-				Quality: ext,
-				URLs:    []string{fileURL},
-				Format:  ext,
-				Headers: cloneHeaders(x.headers),
+				Quality:   ext,
+				URLs:      []string{fileURL},
+				Format:    ext,
+				NeedMerge: ext == "m3u8",
+				Headers:   cloneHeaders(x.headers),
 			},
 		},
-		Extra: map[string]any{"kind": fileType, "module": "material"},
+		Extra: map[string]any{"kind": kind, "file_type": fileType, "module": "material"},
 	}, nil
+}
+
+func (x *materialCtx) resolveResourcePayload(resource string, data map[string]any, fileType string) (string, string, string) {
+	payload := parseICVEResourcePayload(resource)
+	if len(payload) == 0 && strings.HasPrefix(strings.ToLower(strings.TrimSpace(resource)), "http") {
+		payload["fileUrl"] = resource
+	}
+	for k, v := range data {
+		if _, exists := payload[k]; !exists {
+			payload[k] = v
+		}
+	}
+	return resolveICVEResourceMedia(x.c, x.headers, x.mode, payload, fileType)
 }

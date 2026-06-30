@@ -102,6 +102,7 @@ func (s *Zhengbao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("zhengbao requires login cookies")
 	}
+	onlyFiles := zhengbaoOnlyFilesMode(opts.Quality)
 	ctx := newContext(opts.Cookies, rawURL)
 	if ctx.cid == "" && ctx.cwareID == "" {
 		return nil, fmt.Errorf("zhengbao: cannot parse courseId/cwareID from URL")
@@ -120,7 +121,7 @@ func (s *Zhengbao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	for i := range wares {
 		wares[i].Index = i + 1
 		v, lookup := ctx.parseVideoTree(wares[i])
-		if len(v) == 0 {
+		if len(v) == 0 && !onlyFiles {
 			v = directVideosFromCware(wares[i])
 			for _, item := range v {
 				if item.VideoID != "" {
@@ -128,13 +129,16 @@ func (s *Zhengbao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 				}
 			}
 		}
-		videos = append(videos, v...)
-		materials := ctx.parseMaterialTree(wares[i], lookup)
+		if !onlyFiles {
+			videos = append(videos, v...)
+		}
+		materials := ctx.parseMaterialTree(wares[i], lookup, onlyFiles)
 		if len(materials) == 0 {
 			materials = directFilesFromCware(wares[i])
 		}
 		files = append(files, materials...)
 	}
+	files = uniqueZBFiles(files)
 
 	entries := make([]*extractor.MediaInfo, 0, len(videos)+len(files))
 	for i, v := range videos {
@@ -149,6 +153,30 @@ func (s *Zhengbao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		return nil, fmt.Errorf("zhengbao: parsed courseware but no playable video or material URL was resolved")
 	}
 	return &extractor.MediaInfo{Site: "zhengbao", Title: cleanTitle(firstNonEmpty(ctx.cid, ctx.cwareID, "zhengbao")), Entries: entries}, nil
+}
+
+func zhengbaoOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "4", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
+}
+
+func uniqueZBFiles(files []zbFile) []zbFile {
+	seen := map[string]bool{}
+	out := make([]zbFile, 0, len(files))
+	for _, f := range files {
+		key := firstNonEmpty(f.TokenURL, f.DirectURL)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 func newContext(jar http.CookieJar, rawURL string) *zbContext {
@@ -506,7 +534,7 @@ func (x *zbContext) parseVideoTree(cw cwareInfo) ([]zbVideo, map[string]zbVideo)
 	return out, lookup
 }
 
-func (x *zbContext) parseMaterialTree(cw cwareInfo, videoLookup map[string]zbVideo) []zbFile {
+func (x *zbContext) parseMaterialTree(cw cwareInfo, videoLookup map[string]zbVideo, onlyFiles bool) []zbFile {
 	if cw.CwareID == "" {
 		return nil
 	}
@@ -536,6 +564,9 @@ func (x *zbContext) parseMaterialTree(cw cwareInfo, videoLookup map[string]zbVid
 		}
 	}
 	for _, u := range mediaURLRe.FindAllString(body, -1) {
+		if onlyFiles && isVideoURL(u) {
+			continue
+		}
 		if !seen[u] {
 			seen[u] = true
 			out = append(out, zbFile{Title: firstNonEmpty(cw.Title, "课程资料"), DirectURL: strings.ReplaceAll(u, `\/`, `/`), Format: pickFormat(u)})

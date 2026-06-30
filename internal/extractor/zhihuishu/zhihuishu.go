@@ -42,6 +42,7 @@ func (z *Zhihuishu) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("zhihuishu requires login cookies (use --cookies or --cookies-from-browser)")
 	}
+	mode := zhihuishuMode(opts.Quality)
 
 	// Route to sub-brand handlers in priority order matching the Python source's
 	// courses_re matching order: Smart > Live > Interest > School > Course.
@@ -49,32 +50,35 @@ func (z *Zhihuishu) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 
 	// 1. Smart: ai-smart-course-student-pro / smartcoursestudent / wisdomh5
 	if isSmartURL(rawURL) {
-		return extractSmart(rawURL, opts)
+		return extractSmart(rawURL, opts, mode)
 	}
 
 	// 2. Live: liveId= in URL on zhihuishu.com/live
 	if isLiveURL(rawURL) {
-		return extractLive(rawURL, opts)
+		return extractLive(rawURL, opts, mode)
 	}
 
 	// 3. Interest: portals_h5/2clearning.html
 	if isInterestURL(rawURL) {
-		return extractInterest(rawURL, opts)
+		return extractInterest(rawURL, opts, mode)
 	}
 
 	// 4. School: wenda / hiexam-server / studyresources hosts
 	if isSchoolURL(rawURL) {
-		return extractSchool(rawURL, opts)
+		return extractSchool(rawURL, opts, mode)
 	}
 
 	// 5. Direct videoID URL (not a course page)
 	videoID := extractVideoID(rawURL)
 	if videoID != "" {
+		if mode.onlyFiles {
+			return nil, fmt.Errorf("zhihuishu: only-files mode has no direct-video courseware for videoID %s", videoID)
+		}
 		c := util.NewClient()
 		c.SetCookieJar(opts.Cookies)
 		h := zhihuishuHeaders("https://www.zhihuishu.com/")
 
-		url, err := getVideoURL(c, videoID, h)
+		url, err := getVideoURL(c, videoID, h, mode)
 		if err != nil {
 			return nil, err
 		}
@@ -100,12 +104,33 @@ func (z *Zhihuishu) Extract(rawURL string, opts *extractor.ExtractOpts) (*extrac
 	if courseID == "" && extractRecruitAndCourseID(rawURL) == "" {
 		return nil, fmt.Errorf("cannot parse zhihuishu URL: %s", rawURL)
 	}
-	return extractCourseHomeCourse(rawURL, courseID, opts)
+	return extractCourseHomeCourse(rawURL, courseID, opts, mode)
+}
+
+type zhsMode struct {
+	raw       string
+	onlyFiles bool
+	hd        bool
+}
+
+func zhihuishuMode(quality string) zhsMode {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	out := zhsMode{raw: mode, hd: true}
+	switch mode {
+	case "3", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		out.onlyFiles = true
+		out.hd = false
+	case "2", "sd", "smooth", "ld", "流畅", "标清":
+		out.hd = false
+	default:
+		out.hd = true
+	}
+	return out
 }
 
 // getVideoURL implements the initVideo + changeVideoLine chain. Returns the
 // highest-quality mp4 URL or an error.
-func getVideoURL(c *util.Client, videoID string, h map[string]string) (string, error) {
+func getVideoURL(c *util.Client, videoID string, h map[string]string, mode zhsMode) (string, error) {
 	initBody, err := c.GetString(
 		fmt.Sprintf("https://newbase.zhihuishu.com/video/initVideo?videoID=%s", videoID), h)
 	if err != nil {
@@ -135,6 +160,7 @@ func getVideoURL(c *util.Client, videoID string, h map[string]string) (string, e
 		ids = ids[:2]
 	}
 
+	urls := make([]string, 0, len(ids))
 	for _, lineID := range ids {
 		changeBody, err := c.GetString(
 			fmt.Sprintf("https://newbase.zhihuishu.com/video/changeVideoLine?videoID=%s&lineID=%d&uuid=%s",
@@ -148,9 +174,15 @@ func getVideoURL(c *util.Client, videoID string, h map[string]string) (string, e
 		if json.Unmarshal([]byte(changeBody), &ch) != nil || ch.Result == "" {
 			continue
 		}
-		return ch.Result, nil
+		urls = append(urls, ch.Result)
 	}
-	return "", fmt.Errorf("changeVideoLine returned no playable URL")
+	if len(urls) == 0 {
+		return "", fmt.Errorf("changeVideoLine returned no playable URL")
+	}
+	if mode.hd {
+		return urls[0], nil
+	}
+	return urls[len(urls)-1], nil
 }
 
 var (

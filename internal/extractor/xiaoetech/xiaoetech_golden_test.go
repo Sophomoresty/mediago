@@ -227,3 +227,120 @@ func TestExtractH5MerchantSubdomainUsesMerchantAPI(t *testing.T) {
 		t.Fatalf("stream Referer = %q, want %q", got, merchantReferer)
 	}
 }
+
+func TestExtractDocumentUsesDocumentInfoEndpoint(t *testing.T) {
+	const rawURL = "https://appabc123.h5.xiaoeknow.com/p/course/text/d_doc1?app_id=appabc123&product_id=course_1"
+	var sawDocumentInfo bool
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case r.URL.Path == "/p/course/text/d_doc1":
+			_, _ = w.Write([]byte(`<!doctype html><title>Document Lesson</title><script>window.USERID="u1";</script>`))
+		case strings.Contains(r.URL.Path, "e_course.document_info.get"):
+			sawDocumentInfo = true
+			if r.Method != http.MethodPost {
+				t.Errorf("document API method = %s, want POST", r.Method)
+			}
+			if got := r.Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
+				t.Errorf("document Content-Type = %q, want JSON", got)
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"title":"Doc Title","file_name":"doc.pdf","file_url":"https://media.example.com/docs/doc.pdf","is_subscribe":1}}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0,"data":{"list":[]}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	media, err := (&Xiaoetech{}).Extract(rawURL, &extractor.ExtractOpts{Cookies: jar})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if !sawDocumentInfo {
+		t.Fatalf("document info API was not called")
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(media.Entries))
+	}
+	stream := media.Entries[0].Streams["default"]
+	if got := stream.URLs[0]; got != "https://media.example.com/docs/doc.pdf" {
+		t.Fatalf("document URL = %q", got)
+	}
+	if got := stream.Format; got != "pdf" {
+		t.Fatalf("format = %q, want pdf", got)
+	}
+}
+
+func TestExtractTextEmitsHTMLAndRichtextMedia(t *testing.T) {
+	const rawURL = "https://appabc123.h5.xiaoeknow.com/p/course/text/i_text1?app_id=appabc123"
+	var sawTextDetail bool
+	var sawRichtextVideo bool
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case r.URL.Path == "/p/course/text/i_text1":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><title>Text Lesson</title><script>window.USERID="u1";</script>`))
+		case strings.Contains(r.URL.Path, "xe.course.business.get.detail"):
+			sawTextDetail = true
+			_, _ = w.Write([]byte(`{"code":0,"data":{"content":"<h1>Hello</h1><iframe src=\"https://iframe.xiaoeknow.com/page/?id=vid-rich&type=3\"></iframe>"}}`))
+		case r.Host == "iframe.xiaoeknow.com" && r.URL.Path == "/api/richtext/get_video_data":
+			sawRichtextVideo = true
+			_, _ = w.Write([]byte(`{"code":0,"data":{"vid-rich":{"video_url":"https://media.example.com/rich/rich.m3u8","video_title":"Rich Video"}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":0,"data":{"list":[]}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+	media, err := (&Xiaoetech{}).Extract(rawURL, &extractor.ExtractOpts{Cookies: jar})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if !sawTextDetail || !sawRichtextVideo {
+		t.Fatalf("text detail called=%v richtext video called=%v", sawTextDetail, sawRichtextVideo)
+	}
+	if len(media.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(media.Entries))
+	}
+	seenHTML := false
+	seenM3U8 := false
+	for _, entry := range media.Entries {
+		stream := entry.Streams["default"]
+		switch stream.Format {
+		case "html":
+			seenHTML = true
+			if !strings.HasPrefix(stream.URLs[0], "data:text/html;base64,") {
+				t.Fatalf("html URL = %q", stream.URLs[0])
+			}
+		case "m3u8":
+			seenM3U8 = true
+			if got := stream.URLs[0]; got != "https://media.example.com/rich/rich.m3u8" {
+				t.Fatalf("rich media URL = %q", got)
+			}
+			if !stream.NeedMerge {
+				t.Fatalf("rich m3u8 stream NeedMerge=false")
+			}
+		}
+	}
+	if !seenHTML || !seenM3U8 {
+		t.Fatalf("seenHTML=%v seenM3U8=%v entries=%#v", seenHTML, seenM3U8, media.Entries)
+	}
+}

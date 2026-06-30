@@ -2,6 +2,7 @@
 package youdao
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -84,10 +85,16 @@ func (s *Youdao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		}
 		seen[v.URL] = true
 		extra := map[string]any{"video_id": v.ID, "card_id": v.CardID, "live_id": v.LiveID}
+		mediaURL := v.URL
+		format := pickFormat(mediaURL)
 		if manifest, err := ctx.rewriteM3U8IfNeeded(v); err == nil && manifest != "" {
-			extra["m3u8_manifest"] = manifest
+			mediaURL = youdaoM3U8DataURL(manifest)
+			format = "m3u8"
+			extra["source_type"] = "m3u8_text"
+			extra["m3u8_text"] = manifest
+			extra["m3u8_url"] = v.URL
 		}
-		entries = append(entries, &extractor.MediaInfo{Site: "youdao", Title: cleanTitle(v.Title), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{v.URL}, Format: pickFormat(v.URL), Headers: map[string]string{"Referer": refererURL}}}, Extra: extra})
+		entries = append(entries, &extractor.MediaInfo{Site: "youdao", Title: cleanTitle(v.Title), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{mediaURL}, Format: format, NeedMerge: format == "m3u8", Headers: map[string]string{"Referer": refererURL}}}, Extra: extra})
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("youdao: no playable URLs resolved")
@@ -190,18 +197,25 @@ func (x *ydContext) rewriteM3U8IfNeeded(v ydVideo) (string, error) {
 		return "", nil
 	}
 	manifest, err := x.c.GetString(v.URL, x.headers)
-	if err != nil || !strings.Contains(manifest, "#EXT-X-KEY") {
-		return manifest, err
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(manifest, "#EXTM3U") {
+		return "", nil
+	}
+	if !strings.Contains(manifest, "#EXT-X-KEY") {
+		return absolutizeYoudaoM3U8(manifest, v.URL), nil
 	}
 	m := keyURIRe.FindStringSubmatch(manifest)
 	if len(m) < 2 {
-		return manifest, nil
+		return absolutizeYoudaoM3U8(manifest, v.URL), nil
 	}
 	keyBody, err := x.fetchKey(v, m[1])
 	if err != nil || len(keyBody) == 0 {
-		return manifest, err
+		return absolutizeYoudaoM3U8(manifest, v.URL), err
 	}
-	return strings.ReplaceAll(manifest, m[1], "0x"+strings.ToUpper(hex.EncodeToString(keyBody))), nil
+	manifest = strings.ReplaceAll(manifest, m[1], "0x"+strings.ToUpper(hex.EncodeToString(keyBody)))
+	return absolutizeYoudaoM3U8(manifest, v.URL), nil
 }
 
 func (x *ydContext) fetchKey(v ydVideo, keyURI string) ([]byte, error) {
@@ -241,8 +255,62 @@ func firstNonEmpty(vals ...string) string {
 }
 func cleanTitle(s string) string { return titleCleanRe.ReplaceAllString(strings.TrimSpace(s), "_") }
 func pickFormat(u string) string {
-	if strings.Contains(strings.ToLower(u), ".m3u8") {
+	low := strings.ToLower(strings.TrimSpace(u))
+	if strings.Contains(low, ".m3u8") || strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") || strings.HasPrefix(low, "data:application/x-mpegurl") || strings.HasPrefix(low, "#extm3u") {
 		return "m3u8"
 	}
 	return "mp4"
+}
+
+func youdaoM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
+}
+
+func absolutizeYoudaoM3U8(text, baseURL string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			lines[i] = rewriteYoudaoM3U8URIAttrs(line, baseURL)
+			continue
+		}
+		lines[i] = resolveYoudaoURL(trimmed, baseURL)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func rewriteYoudaoM3U8URIAttrs(line, baseURL string) string {
+	return keyURIRe.ReplaceAllStringFunc(line, func(match string) string {
+		parts := keyURIRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		uri := strings.TrimSpace(parts[1])
+		if uri == "" || strings.HasPrefix(strings.ToLower(uri), "0x") || strings.HasPrefix(strings.ToLower(uri), "data:") {
+			return match
+		}
+		return strings.Replace(match, uri, resolveYoudaoURL(uri, baseURL), 1)
+	})
+}
+
+func resolveYoudaoURL(raw, baseURL string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") || strings.HasPrefix(strings.ToLower(raw), "0x") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "//") {
+		return "https:" + raw
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return raw
+	}
+	ref, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return base.ResolveReference(ref).String()
 }

@@ -1,6 +1,7 @@
 package luffycity
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 type luffySource struct {
 	URL, Type string
 	Size      int64
+	Headers   map[string]string
 	Extra     map[string]any
 }
 
@@ -162,6 +164,9 @@ func luffyNormalizeURL(fileURL string, media bool) string {
 func luffyNormalizeMediaURL(v string) string {
 	u := luffyNormalizeURL(v, true)
 	lu := strings.ToLower(u)
+	if strings.HasPrefix(lu, "data:application/vnd.apple.mpegurl") {
+		return u
+	}
 	for _, ext := range []string{".m3u8", ".mp4", ".m4v", ".mov", ".flv", ".mp3", ".m4a", ".aac", ".wav"} {
 		if strings.Contains(lu, ext) {
 			return u
@@ -192,6 +197,10 @@ func luffyCollectMedia(v any) []string {
 	}
 	walk(v)
 	return out
+}
+
+func luffyM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
 }
 
 func indexedTitle(prefix []int, title string) string {
@@ -233,8 +242,11 @@ func firstText(vals ...any) string {
 }
 func mediaExt(u string) string {
 	lu := strings.ToLower(u)
-	if strings.Contains(lu, ".m3u8") || strings.HasPrefix(strings.TrimSpace(u), "#EXTM3U") {
+	if strings.Contains(lu, ".m3u8") || strings.HasPrefix(strings.TrimSpace(u), "#EXTM3U") || strings.HasPrefix(lu, "data:application/vnd.apple.mpegurl") {
 		return "m3u8"
+	}
+	if strings.Contains(lu, ".pdx") {
+		return "pdx"
 	}
 	if strings.Contains(lu, ".mp3") || strings.Contains(lu, ".m4a") || strings.Contains(lu, ".aac") || strings.Contains(lu, ".wav") {
 		return "mp3"

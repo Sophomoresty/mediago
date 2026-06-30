@@ -52,6 +52,16 @@ func TestPatternMatching(t *testing.T) {
 			url:     "https://mooc-old.icve.com.cn/cms/courseDetails/index.htm?classId=kfznbz033xch519",
 			wantExt: "IcveCourse",
 		},
+		{
+			name:    "course sso root URL",
+			url:     "https://sso.icve.com.cn/",
+			wantExt: "IcveCourse",
+		},
+		{
+			name:    "course user root URL",
+			url:     "https://user.icve.com.cn/learning/u/myCourse",
+			wantExt: "IcveCourse",
+		},
 		// Icve_Profession
 		{
 			name:    "profession courseDetailed URL",
@@ -106,26 +116,16 @@ func TestPatternMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ext, err := extractor.Match(tt.url)
+			ext, site, err := extractor.MatchWithSite(tt.url)
 			if err != nil {
-				t.Fatalf("Match(%q) returned error: %v", tt.url, err)
+				t.Fatalf("MatchWithSite(%q) returned error: %v", tt.url, err)
 			}
 			if ext == nil {
-				t.Fatalf("Match(%q) returned nil extractor", tt.url)
+				t.Fatalf("MatchWithSite(%q) returned nil extractor", tt.url)
 			}
-			// Get the site info to check the name
-			var foundName string
-			for _, site := range extractor.ListSites() {
-				// Check if this extractor matches
-				if site.Name == tt.wantExt {
-					foundName = site.Name
-				}
+			if site.Name != tt.wantExt {
+				t.Fatalf("MatchWithSite(%q) site = %q, want %q", tt.url, site.Name, tt.wantExt)
 			}
-			if foundName == "" {
-				t.Fatalf("extractor %q not found in registered sites", tt.wantExt)
-			}
-			// Verify the matched extractor is the right type
-			_ = ext
 		})
 	}
 }
@@ -144,6 +144,7 @@ func TestCIDParsing(t *testing.T) {
 
 		// Course CID
 		{"course learnspace", parseCourseCID, "https://course.icve.com.cn/learnspace/learn/learn/templateeight/courseware_index.action?params.courseId=ABC123", "ABC123"},
+		{"course learnspace uuid", parseCourseCID, "https://course.icve.com.cn/learnspace/learn/learn/templateeight/courseware_index.action?params.courseId=ABC-123_DEF", "ABC-123_DEF"},
 		{"course cid", parseCourseCID, "https://mooc-old.icve.com.cn/cms/courseDetails/index.htm?cid=qcdzzs013shy833", "qcdzzs013shy833"},
 
 		// Profession CID
@@ -152,6 +153,8 @@ func TestCIDParsing(t *testing.T) {
 
 		// Qun CID
 		{"qun course", parseQunCID, "https://qun.icve.com.cn/zyq/course/bz5xafivs7fglydzcpwjpa", "bz5xafivs7fglydzcpwjpa"},
+		{"qun query courseOpenId", parseQunCID, "https://qun.icve.com.cn/zyq/course/detail?courseOpenId=COURSE-OPEN-1", "COURSE-OPEN-1"},
+		{"qun query courseId", parseQunCID, "https://qun.icve.com.cn/course/index?courseId=COURSE-ID-2", "COURSE-ID-2"},
 
 		// Weike CID
 		{"weike weikeId", parseWeikeCID, "https://www.icve.com.cn/portal_new/newweikeinfo/weikeinfo.html?weikeId=517fakcnz5bijqilwr73nq", "517fakcnz5bijqilwr73nq"},

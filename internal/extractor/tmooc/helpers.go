@@ -30,7 +30,8 @@ func headersFromJar(j http.CookieJar) map[string]string {
 	return h
 }
 func media(site, title, u string, extra map[string]any) *extractor.MediaInfo {
-	return &extractor.MediaInfo{Site: site, Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{u}, Format: pickFormat(u), Headers: map[string]string{"Referer": referer, "User-Agent": USER_AGENT}}}, Extra: extra}
+	format := pickFormat(u)
+	return &extractor.MediaInfo{Site: site, Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{u}, Format: format, NeedMerge: format == "m3u8", Headers: map[string]string{"Referer": referer, "User-Agent": USER_AGENT}}}, Extra: extra}
 }
 
 var attrRe = regexp.MustCompile(`(?is)([\w:-]+)\s*=\s*(?:"([^"]*?)"|'([^']*?)')`)

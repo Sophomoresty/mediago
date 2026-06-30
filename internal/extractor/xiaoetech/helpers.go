@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -88,7 +89,7 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 		if u := postDetailURL(c, jar, ctx, it.id, audioURL, pcAudioURL, map[string]string{"bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": "audio", "api": audioURL}
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs audio endpoint resolution", "resource_id": it.id, "resource_type": "audio"}
+		return "", map[string]any{"blocked_reason": "blocked: no audio URL returned by audio endpoint", "resource_id": it.id, "resource_type": "audio"}
 	case "text":
 		if u := firstMediaURL(it.raw); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": "text", "api": "source"}
@@ -96,24 +97,29 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 		if u := postDetailURL(c, jar, ctx, it.id, textURL, pcTextURL, map[string]string{"bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": "text", "api": textURL}
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs text endpoint resolution", "resource_id": it.id, "resource_type": "text"}
+		return "", map[string]any{"blocked_reason": "blocked: no text HTML or media URL returned by text endpoint", "resource_id": it.id, "resource_type": "text"}
 	case "book":
 		if u := postDetailURL(c, jar, ctx, it.id, ebookURL, pcEbookURL, map[string]string{"bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": "book", "api": ebookURL}
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs ebook endpoint resolution", "resource_id": it.id, "resource_type": "book"}
+		return "", map[string]any{"blocked_reason": "blocked: no ebook URL returned by ebook endpoint", "resource_id": it.id, "resource_type": "book"}
 	case "clock":
 		return "", map[string]any{"blocked_reason": "blocked: clock resource has no playable media in source APIs", "resource_id": it.id, "resource_type": "clock"}
 	case "document", "file":
+		if typ == "document" {
+			if u := documentDetailURL(c, jar, ctx, it); u != "" {
+				return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": documentInfoURL}
+			}
+		}
 		if u := firstMediaURL(it.raw); u != "" {
-			baseExtra["api"] = "courseware_list"
+			baseExtra["api"] = "source"
 			return u, baseExtra
 		}
-		fileResType := firstNonEmpty(val(it.raw, "resource_type"), normType(typ))
+		fileResType := firstNonEmpty(val(it.raw, "resource_type"), resourceTypeNumber(typ, ""), normType(typ))
 		if u := postDetailURL(c, jar, ctx, it.id, fileURL, pcFileURL, map[string]string{"bizData[resource_type]": fileResType, "bizData[resource_id]": it.id}); u != "" {
 			return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": fileURL}
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs file endpoint resolution", "resource_id": it.id, "resource_type": typ}
+		return "", map[string]any{"blocked_reason": "blocked: no file URL returned by document/courseware endpoints", "resource_id": it.id, "resource_type": typ}
 	case "column", "bigcolumn", "member", "ecourse", "train":
 		// Try column items endpoint first; for member type also try member-specific endpoint.
 		if u := postDetailURL(c, jar, ctx, it.id, infoURL, pcInfoURL, map[string]string{"bizData[column_id]": it.id, "bizData[page_size]": "100", "bizData[page_index]": "1", "bizData[sort]": "desc"}); u != "" {
@@ -124,7 +130,7 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 				return u, map[string]any{"resource_id": it.id, "resource_type": typ, "api": memberInfoURL}
 			}
 		}
-		return "", map[string]any{"blocked_reason": "blocked: needs column endpoint resolution", "resource_id": it.id, "resource_type": typ}
+		return "", map[string]any{"blocked_reason": "blocked: no child item or direct URL returned by container endpoints", "resource_id": it.id, "resource_type": typ}
 	}
 	if u := firstMediaURL(it.raw); u != "" {
 		// Try to decode __ba-obfuscated URLs instead of blocking.
@@ -144,11 +150,14 @@ func resolveItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) (st
 			return "", map[string]any{"blocked_reason": "blocked: failed to decode private lookback URL", "resource_id": it.id, "resource_type": typ}
 		}
 		baseExtra["api"] = "source"
+		if sourceType := val(it.raw, "_source_type"); sourceType != "" {
+			baseExtra["source_type"] = sourceType
+		}
 		return u, baseExtra
 	}
 	u, extra := videoMediaURL(c, jar, ctx, it.id)
 	if u == "" {
-		return "", map[string]any{"blocked_reason": "blocked: needs protected live or video source resolution", "resource_id": it.id, "resource_type": typ}
+		return "", map[string]any{"blocked_reason": "blocked: no playable URL returned by source APIs", "resource_id": it.id, "resource_type": typ}
 	}
 	for k, v := range extra {
 		baseExtra[k] = v
@@ -616,7 +625,55 @@ func postDetailURL(c *util.Client, jar http.CookieJar, ctx xetCtx, id, h5Tpl, pc
 	if u := firstMediaURL(root["data"]); u != "" {
 		return u
 	}
-	return firstURLInString(body)
+	return firstMediaURLInString(body)
+}
+
+func documentDetailURL(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) string {
+	if it.id == "" {
+		return ""
+	}
+	productID := firstNonEmpty(ctx.productID, val(it.raw, "product_id"), val(it.raw, "pro_id"), val(it.raw, "course_id"))
+	var (
+		body string
+		err  error
+	)
+	if ctx.pc && ctx.domain != "" {
+		api := fmt.Sprintf(pcDocumentInfoURL, ctx.domain)
+		body, err = c.PostForm(api, map[string]string{"opr_sys": "Win32", "resource_id": it.id}, headers(jar, referer(ctx)))
+	} else if ctx.appID != "" {
+		api := fmt.Sprintf(documentInfoURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault))
+		bizData := map[string]any{"resource_id": it.id}
+		if productID != "" {
+			bizData["product_id"] = productID
+		}
+		payload, marshalErr := json.Marshal(map[string]any{"bizData": bizData})
+		if marshalErr != nil {
+			return ""
+		}
+		resp, postErr := c.Post(api, strings.NewReader(string(payload)), jsonHeaders(jar, referer(ctx)))
+		if postErr != nil {
+			return ""
+		}
+		defer resp.Body.Close()
+		buf, readErr := io.ReadAll(resp.Body)
+		if readErr != nil || resp.StatusCode >= 400 {
+			return ""
+		}
+		body = string(buf)
+	} else {
+		return ""
+	}
+	if err != nil || body == "" {
+		return ""
+	}
+	var root map[string]any
+	if json.Unmarshal([]byte(body), &root) != nil {
+		return ""
+	}
+	if u := firstMediaURL(root["data"]); u != "" {
+		return u
+	}
+	return firstMediaURLInString(body)
 }
 
 func postJSONDetail(c *util.Client, jar http.CookieJar, ctx xetCtx, h5Tpl string, data map[string]any) map[string]any {
@@ -720,7 +777,7 @@ func normType(t string) string {
 }
 func firstMediaURL(v any) string {
 	for _, m := range mapsUnder(v) {
-		for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "audio_m3u8_url", "audio_url", "video_audio_url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "epub_url", "file_url", "url", "m3u8_url", "play_url", "PlayURL"} {
+		for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "audio_m3u8_url", "audio_url", "video_audio_url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "epub_url", "file_url", "download_url", "downloadUrl", "doc_url", "document_url", "courseware_url", "url", "m3u8_url", "play_url", "PlayURL"} {
 			if u := normalizeURL(val(m, k)); isMediaURL(u) {
 				return u
 			}
@@ -734,11 +791,34 @@ func firstURLInString(s string) string {
 	}
 	return ""
 }
+func firstMediaURLInString(s string) string {
+	for _, raw := range httpRe.FindAllString(s, -1) {
+		if u := normalizeURL(raw); isMediaURL(u) {
+			return u
+		}
+	}
+	return ""
+}
 func isMediaURL(u string) bool {
 	if strings.HasPrefix(u, "data:text/html") {
 		return true
 	}
-	return (strings.HasPrefix(u, "http") || strings.HasPrefix(u, "//")) && !regexp.MustCompile(`(?i)\.(?:jpg|jpeg|png|gif|webp)(?:[?#]|$)`).MatchString(u)
+	return (strings.HasPrefix(u, "http") || strings.HasPrefix(u, "//")) && !isXETPageURL(u) && !regexp.MustCompile(`(?i)\.(?:jpg|jpeg|png|gif|webp)(?:[?#]|$)`).MatchString(u)
+}
+func isXETPageURL(raw string) bool {
+	u, err := url.Parse(normalizeURL(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.ToLower(u.EscapedPath())
+	if host == "iframe.xiaoeknow.com" && strings.HasPrefix(path, "/page/") {
+		return true
+	}
+	if !(strings.Contains(host, "xiaoeknow.com") || strings.Contains(host, "xiaoecloud.com") || strings.Contains(host, "xiaoe-tech.com") || strings.Contains(host, "xet.citv.cn")) {
+		return false
+	}
+	return strings.Contains(path, "/p/course/") || strings.Contains(path, "/p/t_pc/") || regexp.MustCompile(`(?i)/v\d+/(?:course|goods)/`).MatchString(path)
 }
 func media(title, u string, extra map[string]any, ref ...string) *extractor.MediaInfo {
 	if title == "" {
@@ -836,14 +916,15 @@ func formatOf(u string) string {
 	if strings.Contains(l, ".m3u8") {
 		return "m3u8"
 	}
-	if strings.Contains(l, ".mp3") {
-		return "mp3"
+	pathPart := l
+	if parsed, err := url.Parse(l); err == nil && parsed.Path != "" {
+		pathPart = parsed.Path
 	}
-	if strings.Contains(l, ".epub") {
-		return "epub"
-	}
-	if strings.Contains(l, ".pdf") {
-		return "pdf"
+	if i := strings.LastIndex(pathPart, "."); i >= 0 && i < len(pathPart)-1 {
+		ext := pathPart[i+1:]
+		if regexp.MustCompile(`^[a-z0-9]{1,8}$`).MatchString(ext) {
+			return ext
+		}
 	}
 	return "mp4"
 }

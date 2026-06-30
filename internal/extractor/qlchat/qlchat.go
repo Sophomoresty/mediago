@@ -209,6 +209,18 @@ type qVideo struct {
 	PlayURL       string `json:"playUrl"`
 	Type          string `json:"type"`
 }
+type qMediaResp struct {
+	State struct {
+		Code any    `json:"code"`
+		Msg  string `json:"msg"`
+	} `json:"state"`
+	Data struct {
+		Video []qVideo `json:"video"`
+		Audio struct {
+			PlayURL string `json:"playUrl"`
+		} `json:"audio"`
+	} `json:"data"`
+}
 
 func parseInput(raw string) qState {
 	return qState{cid: first(match1(raw, `channelId=(\d+)`), match1(raw, `/channelPage/(\d+)\.htm`)), topicID: first(match1(raw, `topicId=(\d+)`), match1(raw, `/topic/(\d+)`))}
@@ -340,11 +352,18 @@ func fetchCourseItems(c *util.Client, h map[string]string, cid, liveID string) (
 	return out, nil
 }
 func resolveTopic(c *util.Client, h map[string]string, topicID, title string) (*extractor.MediaInfo, error) {
-	play := first(resolveVideo(c, h, topicID, false), resolveVideo(c, h, topicID, true), resolveAudio(c, h, topicID))
+	play := resolveVideo(c, h, topicID, false)
+	if play == "" {
+		play = resolveVideo(c, h, topicID, true)
+	}
+	if play == "" {
+		play = resolveAudio(c, h, topicID)
+	}
 	if play == "" {
 		return nil, fmt.Errorf("qlchat: empty playUrl for topicId %s", topicID)
 	}
-	return &extractor.MediaInfo{Site: "qlchat", Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{play}, Format: pickFormat(play), Headers: map[string]string{"Referer": referer}}}, Extra: map[string]any{"topic_id": topicID}}, nil
+	format := pickFormat(play)
+	return &extractor.MediaInfo{Site: "qlchat", Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{play}, Format: format, NeedMerge: format == "m3u8", Headers: map[string]string{"Referer": referer}}}, Extra: map[string]any{"topic_id": topicID}}, nil
 }
 func resolveVideo(c *util.Client, h map[string]string, topicID string, isLive bool) string {
 	if isLive {
@@ -362,14 +381,10 @@ func resolveVideo(c *util.Client, h map[string]string, topicID string, isLive bo
 		}
 	}
 	sourceID := first(sourceTopicID(c, h, topicID), topicID)
-	var resp struct {
-		Data struct {
-			Video []qVideo `json:"video"`
-		} `json:"data"`
-	}
+	var resp qMediaResp
 	_ = postJSONInto(c, video_url, map[string]any{"topicId": sourceID, "relayTopicId": topicID}, h, &resp)
 	if len(resp.Data.Video) == 0 {
-		_ = getJSONInto(c, fmt.Sprintf(h5_video_url, url.QueryEscape(topicID)), h, &resp)
+		resp = getH5MediaInfoWithFreeJoin(c, h, topicID)
 	}
 	if len(resp.Data.Video) == 0 {
 		return ""
@@ -380,15 +395,51 @@ func resolveVideo(c *util.Client, h map[string]string, topicID string, isLive bo
 	return qlchatDecryptPlayURL(resp.Data.Video[0].PlayURL)
 }
 func resolveAudio(c *util.Client, h map[string]string, topicID string) string {
-	var resp struct {
-		Data struct {
-			Audio struct {
-				PlayURL string `json:"playUrl"`
-			} `json:"audio"`
-		} `json:"data"`
-	}
-	_ = getJSONInto(c, fmt.Sprintf(audio_url, url.QueryEscape(topicID)), h, &resp)
+	resp := getH5MediaInfoWithFreeJoin(c, h, topicID)
 	return qlchatDecryptPlayURL(resp.Data.Audio.PlayURL)
+}
+
+func getH5MediaInfoWithFreeJoin(c *util.Client, h map[string]string, topicID string) qMediaResp {
+	var resp qMediaResp
+	_ = getJSONInto(c, fmt.Sprintf(h5_video_url, url.QueryEscape(topicID)), h, &resp)
+	if qlchatMediaRespHasPlayable(resp) || !qlchatNeedsFreeJoin(resp) {
+		return resp
+	}
+	if !joinFreeCourse(c, h, topicID, "topic") {
+		return resp
+	}
+	var retry qMediaResp
+	_ = getJSONInto(c, fmt.Sprintf(h5_video_url, url.QueryEscape(topicID)), h, &retry)
+	return retry
+}
+
+func qlchatMediaRespHasPlayable(resp qMediaResp) bool {
+	if len(resp.Data.Video) > 0 {
+		return true
+	}
+	return strings.TrimSpace(resp.Data.Audio.PlayURL) != ""
+}
+
+func qlchatNeedsFreeJoin(resp qMediaResp) bool {
+	msg := strings.TrimSpace(resp.State.Msg)
+	return strings.Contains(msg, "请先报名") || strings.Contains(strings.ToLower(msg), "join")
+}
+
+func joinFreeCourse(c *util.Client, h map[string]string, businessID, businessType string) bool {
+	businessID = strings.TrimSpace(businessID)
+	businessType = strings.TrimSpace(businessType)
+	if businessID == "" || (businessType != "topic" && businessType != "channel") {
+		return false
+	}
+	var resp struct {
+		State struct {
+			Code any `json:"code"`
+		} `json:"state"`
+	}
+	if err := postJSONInto(c, join_free_course_url, map[string]any{"businessType": businessType, "businessId": businessID}, h, &resp); err != nil {
+		return false
+	}
+	return jstr(resp.State.Code) == "0"
 }
 func sourceTopicID(c *util.Client, h map[string]string, id string) string {
 	body, _ := c.GetString(fmt.Sprintf(topic_url, url.QueryEscape(id)), h)
@@ -487,14 +538,16 @@ func resolveTopicSpeakVideos(c *util.Client, h map[string]string, liveID, topicI
 	entries := make([]*extractor.MediaInfo, 0, len(urls))
 	for i, u := range urls {
 		title := sanitize(fmt.Sprintf("%s_视频_%d", parentName, i+1))
+		format := pickFormat(u)
 		entries = append(entries, &extractor.MediaInfo{
 			Site:  "qlchat",
 			Title: title,
 			Streams: map[string]extractor.Stream{"best": {
-				Quality: "best",
-				URLs:    []string{u},
-				Format:  pickFormat(u),
-				Headers: map[string]string{"Referer": referer},
+				Quality:   "best",
+				URLs:      []string{u},
+				Format:    format,
+				NeedMerge: format == "m3u8",
+				Headers:   map[string]string{"Referer": referer},
 			}},
 			Extra: map[string]any{"topic_id": topicID, "resource_type": "speak_video"},
 		})
@@ -660,8 +713,11 @@ func resolveTopicArticle(c *util.Client, h map[string]string, topicID, parentNam
 
 func qlchatDecryptPlayURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.HasPrefix(strings.ToLower(raw), "http") {
+	if raw == "" {
 		return raw
+	}
+	if normalized, ok := normalizeQlchatPlayable(raw); ok {
+		return normalized
 	}
 	cipherTextCandidates := decodeCiphertextCandidates(raw)
 	keyCandidates := [][]byte{[]byte(qlchatAESKey)}
@@ -688,12 +744,26 @@ func qlchatDecryptPlayURL(raw string) string {
 			cipher.NewCBCDecrypter(block, iv).CryptBlocks(plain, cipherText)
 			plain = pkcs7Unpad(plain, block.BlockSize())
 			decoded := strings.TrimSpace(string(plain))
-			if strings.HasPrefix(strings.ToLower(decoded), "http") {
-				return decoded
+			if normalized, ok := normalizeQlchatPlayable(decoded); ok {
+				return normalized
 			}
 		}
 	}
 	return raw
+}
+
+func normalizeQlchatPlayable(raw string) (string, bool) {
+	low := strings.ToLower(strings.TrimSpace(raw))
+	if strings.HasPrefix(low, "#extm3u") {
+		return dataM3U8URL(raw), true
+	}
+	if strings.HasPrefix(low, "http://") ||
+		strings.HasPrefix(low, "https://") ||
+		strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") ||
+		strings.HasPrefix(low, "data:application/x-mpegurl") {
+		return raw, true
+	}
+	return "", false
 }
 
 func decodeCiphertextCandidates(raw string) [][]byte {
@@ -807,7 +877,16 @@ func sanitize(s string) string {
 	return regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`).ReplaceAllString(s, "_")
 }
 func pickFormat(u string) string {
-	p := strings.ToLower(strings.SplitN(strings.SplitN(u, "?", 2)[0], "#", 2)[0])
+	raw := strings.TrimSpace(u)
+	low := strings.ToLower(raw)
+	if strings.HasPrefix(low, "#extm3u") ||
+		strings.HasPrefix(low, "data:application/vnd.apple.mpegurl") ||
+		strings.HasPrefix(low, "data:application/x-mpegurl") ||
+		strings.Contains(low, ".m3u8") ||
+		strings.Contains(low, "mpegurl") {
+		return "m3u8"
+	}
+	p := strings.ToLower(strings.SplitN(strings.SplitN(raw, "?", 2)[0], "#", 2)[0])
 	if i := strings.LastIndex(p, "."); i >= 0 && i < len(p)-1 {
 		return p[i+1:]
 	}
@@ -816,4 +895,8 @@ func pickFormat(u string) string {
 
 func dataHTMLURL(content string) string {
 	return "data:text/html;charset=utf-8," + url.PathEscape(content)
+}
+
+func dataM3U8URL(content string) string {
+	return "data:application/vnd.apple.mpegurl;charset=utf-8," + url.PathEscape(content)
 }

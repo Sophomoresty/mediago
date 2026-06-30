@@ -401,7 +401,11 @@ func fetchLessonToken(c *util.Client, cu courseURL, lessonID string, headers map
 		return "", "", false, err
 	}
 	var resp playTokenResponse
-	_ = json.Unmarshal([]byte(body), &resp)
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		token = pickRegex(tokenRe, body)
+		roomID = firstNonEmpty(pickRegex(classIDRe, body), lessonID)
+		return token, roomID, false, nil
+	}
 	token = firstNonEmpty(resp.Token, resp.Data.Token, pickRegex(tokenRe, body))
 	roomID = firstNonEmpty(anyString(resp.VideoID), anyString(resp.RoomID), anyString(resp.ClassID), anyString(resp.Data.VideoID), anyString(resp.Data.RoomID), anyString(resp.Data.ClassID), pickRegex(classIDRe, body), lessonID)
 	return token, roomID, false, nil

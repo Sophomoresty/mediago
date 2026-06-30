@@ -41,7 +41,7 @@
       "playsafe": "TOKEN1"
     }
   },
-  "GET /secure/POLYV1.json": {
+  "GET /secure/POLYV1_P.json": {
     "code": 200,
     "data": {
       "playsafe": {

@@ -35,7 +35,7 @@ func TestLoadFinalQcloudM3U8ReturnsDataURL(t *testing.T) {
 	defer srv.Close()
 
 	c := util.NewClient()
-	u, text := loadFinalQcloudM3U8(c, qcloudPlayInfo{MasterURL: srv.URL + "/master.m3u8", DRMToken: "tok"})
+	u, text := loadFinalQcloudM3U8(c, qcloudPlayInfo{MasterURL: srv.URL + "/master.m3u8", DRMToken: "tok"}, 1080)
 	if !strings.HasPrefix(u, "data:application/vnd.apple.mpegurl;base64,") {
 		t.Fatalf("url = %q", u)
 	}
@@ -46,5 +46,26 @@ func TestLoadFinalQcloudM3U8ReturnsDataURL(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil || string(decoded) != text {
 		t.Fatalf("data URL content mismatch: %v", err)
+	}
+}
+
+func TestSelectQcloudVariantHonorsTargetQuality(t *testing.T) {
+	master := "#EXTM3U\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1920x1080\n1080/index.m3u8\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1280x720\n720/index.m3u8\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=854x480\n480/index.m3u8\n"
+	base := "https://cdn.example.com/master.m3u8"
+
+	got, _ := selectQcloudVariant(master, base, qcloudPlayInfo{}, 720)
+	if got != "https://cdn.example.com/720/index.m3u8" {
+		t.Fatalf("HD variant = %q, want 720p", got)
+	}
+	got, _ = selectQcloudVariant(master, base, qcloudPlayInfo{}, 480)
+	if got != "https://cdn.example.com/480/index.m3u8" {
+		t.Fatalf("SD variant = %q, want 480p", got)
+	}
+	got, _ = selectQcloudVariant(master, base, qcloudPlayInfo{}, 1080)
+	if got != "https://cdn.example.com/1080/index.m3u8" {
+		t.Fatalf("FHD variant = %q, want 1080p", got)
 	}
 }

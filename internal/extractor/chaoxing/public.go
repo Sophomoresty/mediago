@@ -14,6 +14,10 @@ const (
 	publicKnowledgePath   = "/nodedetailcontroller/visitnodedetail"
 )
 
+// Python Chaoxing_Course accepts public-course input examples such as
+// https://mooc1.chaoxing.com/course/222529124.html and
+// https://mooc1.chaoxing.com/mooc-ans/course/207139102.html. Both forms are
+// normalized here to the same xueyinonline public chapter/knowledge APIs.
 func (x *chaoxingContext) shouldTryPublicCourseFallback(rawURL, page string, chapters []chaoxingChapter, entries []*extractor.MediaInfo) bool {
 	if x.courseID == "" || x.newCourse {
 		return false
@@ -36,6 +40,10 @@ func isPublicCourseLikeURL(rawURL, page string) bool {
 }
 
 func (x *chaoxingContext) resolvePublicCourseEntries() []*extractor.MediaInfo {
+	return x.resolveXueyinMoocCourse()
+}
+
+func (x *chaoxingContext) resolveXueyinMoocCourse() []*extractor.MediaInfo {
 	if x.courseID == "" {
 		return nil
 	}

@@ -24,7 +24,7 @@ const (
 
 var (
 	patterns     = []string{`(?:[\w-]+\.)?yijiayk\.com/`}
-	cidRe        = regexp.MustCompile(`courseId=(\w+)`)
+	cidRe        = regexp.MustCompile(`(?i)(?:^|[?&#])courseId=([-\w]+)`)
 	titleCleanRe = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
 )
 
@@ -81,6 +81,20 @@ func (s *Youyuan) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 }
 
 func parseCID(raw string) string {
+	if u, err := url.Parse(strings.TrimSpace(raw)); err == nil {
+		if cid := strings.TrimSpace(u.Query().Get("courseId")); cid != "" {
+			return cid
+		}
+		if frag := strings.TrimSpace(u.Fragment); frag != "" {
+			if idx := strings.Index(frag, "?"); idx >= 0 && idx+1 < len(frag) {
+				if values, err := url.ParseQuery(frag[idx+1:]); err == nil {
+					if cid := strings.TrimSpace(values.Get("courseId")); cid != "" {
+						return cid
+					}
+				}
+			}
+		}
+	}
 	if m := cidRe.FindStringSubmatch(raw); len(m) > 1 {
 		return m[1]
 	}
@@ -94,7 +108,7 @@ func headersFromJar(jar http.CookieJar) map[string]string {
 		u, _ := url.Parse(raw)
 		for _, ck := range jar.Cookies(u) {
 			parts = append(parts, ck.Name+"="+ck.Value)
-			if ck.Name == "accessToken" {
+			if strings.EqualFold(ck.Name, "accessToken") {
 				h["accessToken"], h["authorization"] = ck.Value, ck.Value
 			}
 		}
@@ -122,7 +136,7 @@ func collectLessons(root map[string]any) []yyLesson {
 	for ci, chapter := range extractItems(root["data"]) {
 		chapterName := firstNonEmpty(firstString(chapter, "chapterName"), "默认章节")
 		for li, lesson := range extractItems(firstNonNil(chapter["courseLessonList"], chapter["lessonList"], chapter["children"])) {
-			id := firstString(lesson, "id", "chapterId")
+			id := firstString(lesson, "chapterId", "id")
 			if id == "" {
 				continue
 			}

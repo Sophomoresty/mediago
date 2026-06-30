@@ -22,7 +22,10 @@ func parseRoute(raw string) routeInfo {
 		cfg.RawURL = raw
 		cfg.BaseURL = routeBaseURL(raw)
 		cfg.Company = m[1]
-		q, _ := url.ParseQuery(m[4])
+		q, err := url.ParseQuery(m[4])
+		if err != nil {
+			q = url.Values{}
+		}
 		cfg.Query = valuesToMap(q)
 		cfg.ID = firstNonEmpty(q.Get(cfg.IDKey), q.Get("courseId"), q.Get("liveId"), q.Get("extId"), q.Get("datumId"), q.Get("combosId"), q.Get("testId"))
 		return cfg
@@ -85,8 +88,8 @@ func parseRoute(raw string) routeInfo {
 		cfg.Query = extractRouteQuery(raw)
 		cfg.Company = extractRouteCompany(raw)
 	}
-	u, _ := url.Parse(raw)
-	if u != nil {
+	u, err := url.Parse(raw)
+	if err == nil && u != nil {
 		q := u.Query()
 		cfg.ID = firstNonEmpty(q.Get(cfg.IDKey), q.Get("courseId"), q.Get("liveId"), q.Get("extId"), q.Get("datumId"), q.Get("combosId"), q.Get("prodId"), q.Get("productId"), q.Get("id"))
 	}
@@ -123,7 +126,10 @@ func extractRouteQuery(raw string) map[string]string {
 	if i := strings.Index(raw, "#"); i >= 0 {
 		frag := raw[i+1:]
 		if j := strings.Index(frag, "?"); j >= 0 {
-			q, _ := url.ParseQuery(frag[j+1:])
+			q, err := url.ParseQuery(frag[j+1:])
+			if err != nil {
+				return nil
+			}
 			return valuesToMap(q)
 		}
 	}

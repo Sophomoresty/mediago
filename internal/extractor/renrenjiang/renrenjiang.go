@@ -250,7 +250,8 @@ func resolveActivity(c *util.Client, h map[string]string, userID, activityID, ti
 	if play.URL == "" {
 		return nil, fmt.Errorf("renrenjiang: empty stream for activity %s", activityID)
 	}
-	return &extractor.MediaInfo{Site: "renrenjiang", Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{play.URL}, Format: pickFormat(play.URL), Size: play.Size, Headers: map[string]string{"Referer": REFERER, "Origin": ORIGIN}}}, Extra: map[string]any{"activity_id": activityID}}, nil
+	format := pickFormat(play.URL)
+	return &extractor.MediaInfo{Site: "renrenjiang", Title: sanitize(title), Streams: map[string]extractor.Stream{"best": {Quality: "best", URLs: []string{play.URL}, Format: format, NeedMerge: format == "m3u8", Size: play.Size, Headers: map[string]string{"Referer": REFERER, "Origin": ORIGIN}}}, Extra: map[string]any{"activity_id": activityID}}, nil
 }
 func resolveActivityStream(c *util.Client, h map[string]string, userID, id string) playInfo {
 	endpoints := []struct {
@@ -289,7 +290,7 @@ func extractStream(v any, c *util.Client, h map[string]string) playInfo {
 	return playInfo{}
 }
 func getQCloudPlayURL(c *util.Client, h map[string]string, fileID, psign string) playInfo {
-	resp, err := requestJSON(c, "GET", fmt.Sprintf(QCLOUD_PLAY_API, QCLOUD_APP_ID, fileID), map[string]string{"psign": psign}, nil, h)
+	resp, err := requestJSON(c, "GET", fmt.Sprintf(QCLOUD_PLAY_API, QCLOUD_APP_ID, fileID), map[string]string{"psign": psign, "keyId": "1"}, nil, h)
 	if err != nil {
 		return playInfo{}
 	}

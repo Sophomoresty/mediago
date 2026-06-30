@@ -101,10 +101,10 @@ func (x *Xuetang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extracto
 		return nil, fmt.Errorf("cannot parse xuetang classroom id from URL: %s", rawURL)
 	}
 
-	return extractCourse(c, base, h, parts.sign, parts.cid)
+	return extractCourse(c, base, h, parts.sign, parts.cid, xuetangOnlyFilesMode(opts.Quality))
 }
 
-func extractCourse(c *util.Client, base string, h map[string]string, sign, cid string) (*extractor.MediaInfo, error) {
+func extractCourse(c *util.Client, base string, h map[string]string, sign, cid string, onlyFiles bool) (*extractor.MediaInfo, error) {
 	titleBody, _ := c.GetString(fmt.Sprintf("%s/api/v1/lms/learn/product/info?cid=%s&sign=%s", base, cid, sign), h)
 	title := matchGroup1(titleBody, `"classroom_name"\s*:\s*"([^"]+)"`)
 	if title == "" {
@@ -119,12 +119,12 @@ func extractCourse(c *util.Client, base string, h map[string]string, sign, cid s
 
 	var entries []*extractor.MediaInfo
 	for _, leaf := range leafs {
-		src := resolveLeafSource(c, base, h, sign, cid, leaf.ID)
+		src := resolveLeafSource(c, base, h, sign, cid, leaf.ID, onlyFiles)
 		if src == nil || src.empty() {
 			continue
 		}
 		name := fmt.Sprintf("%02d.%02d.%02d %s", leaf.ChapterIndex, leaf.SectionIndex, leaf.LeafIndex, sanitize(firstNonEmpty(leaf.Name, src.Title, "Leaf "+leaf.ID)))
-		entries = append(entries, mediaFromSource(base, h, name, leaf.ID, src)...)
+		entries = append(entries, mediaFromSource(base, h, name, leaf.ID, src, onlyFiles)...)
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("no playable media found (course locked or no purchase?)")
@@ -135,6 +135,16 @@ func extractCourse(c *util.Client, base string, h map[string]string, sign, cid s
 		Title:   title,
 		Entries: entries,
 	}, nil
+}
+
+func xuetangOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "3", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
 }
 
 func extractLive(c *util.Client, base string, h map[string]string, parts xuetangURLParts) (*extractor.MediaInfo, error) {
@@ -219,7 +229,7 @@ func fetchTrainingClassroomID(c *util.Client, base string, h map[string]string, 
 //	leaf_info/{cid}/{leaf}/?sign={sign} → data.content_info.media.ccid
 //	service/playurl/{ccid}/?appid=10000 → data.sources.quality10/20 (mp4 URLs)
 func getVideoURL(c *util.Client, base string, h map[string]string, sign, cid, leafID string) string {
-	src := resolveLeafSource(c, base, h, sign, cid, leafID)
+	src := resolveLeafSource(c, base, h, sign, cid, leafID, false)
 	if src == nil {
 		return ""
 	}

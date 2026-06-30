@@ -118,11 +118,16 @@ func luffyResolveAliyunShared(c *util.Client, sess *luffySession, payload map[st
 	if err != nil || info == nil || info.URL == "" {
 		return luffySource{}
 	}
-	extra := map[string]any{"aliyun_api": info.APIURL, "source_type": info.SourceType, "definition": info.Definition}
+	sourceURL := info.URL
+	sourceType := firstText(info.SourceType, info.Format, mediaExt(info.URL))
+	extra := map[string]any{"aliyun_api": info.APIURL, "source_type": sourceType, "definition": info.Definition}
 	if info.M3U8Text != "" {
 		extra["m3u8_text"] = info.M3U8Text
+		sourceURL = luffyM3U8DataURL(info.M3U8Text)
+		sourceType = "m3u8_text"
+		extra["source_type"] = sourceType
 	}
-	return luffySource{URL: info.URL, Type: firstText(info.SourceType, info.Format, mediaExt(info.URL)), Size: info.Size, Extra: extra}
+	return luffySource{URL: sourceURL, Type: sourceType, Size: info.Size, Extra: extra}
 }
 
 func luffyRequestAliyunPlayInfo(c *util.Client, sess *luffySession, payload map[string]any, videoID string) map[string]any {

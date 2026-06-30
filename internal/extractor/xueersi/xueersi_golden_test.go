@@ -134,3 +134,11 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestMediaMarksM3U8NeedMerge(t *testing.T) {
+	mi := media("Lesson", "https://media.example.com/lesson.m3u8", course{id: "1001", stuCouID: "2001"}, plan{id: "3001"})
+	stream := mi.Streams["default"]
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream = %#v, want m3u8 NeedMerge=true", stream)
+	}
+}

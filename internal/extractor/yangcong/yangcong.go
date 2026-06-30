@@ -35,10 +35,10 @@ const (
 	hlsKeyURL         = apiHost + "/videoBase/getHlsEncryptKey?id=%s&x-key=%s"
 
 	// Yangcong_Config constants
-	hlsSaltFallback = "yangcong"           // YANGCONG_HLS_SALT_FALLBACK
-	hlsKeyVersion   = "1.0.12-beta.18"     // YANGCONG_HLS_KEY_VERSION
-	aesECBKey       = "1234567890123456"    // AES ECB key for encrypt_body decryption
-	ycUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+	hlsSaltFallback = "yangcong"         // YANGCONG_HLS_SALT_FALLBACK
+	hlsKeyVersion   = "1.0.12-beta.18"   // YANGCONG_HLS_KEY_VERSION
+	aesECBKey       = "1234567890123456" // AES ECB key for encrypt_body decryption
+	ycUserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 var (
@@ -100,7 +100,7 @@ func (y *Yangcong) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 			continue
 		}
 		seen[v.VideoID+":"+v.TopicID] = true
-		entry, err := resolveVideo(c, headers, v)
+		entry, err := resolveVideo(c, headers, v, opts.Quality)
 		if err == nil {
 			entries = append(entries, entry)
 		}
@@ -283,7 +283,7 @@ func videoID(m map[string]any) string {
 	return firstString(asMap(m["video"]), "id", "videoId", "video_id")
 }
 
-func resolveVideo(c *util.Client, headers map[string]string, v ycVideo) (*extractor.MediaInfo, error) {
+func resolveVideo(c *util.Client, headers map[string]string, v ycVideo, quality string) (*extractor.MediaInfo, error) {
 	payload := map[string]any{"videoList": []map[string]any{{"refinedExerciseId": v.TopicID, "topicId": v.TopicID, "videoId": v.VideoID, "custom": map[string]string{"videoId": v.VideoID}}}}
 	resp, err := postJSON(c, videoAddressesURL, payload, headers)
 	if err != nil {
@@ -292,17 +292,28 @@ func resolveVideo(c *util.Client, headers map[string]string, v ycVideo) (*extrac
 	addressList := extractAddressList(resp)
 
 	// Source logic: prefer HLS, then try HLS m3u8 rewrite, fall back to mp4.
-	addr := selectAddress(addressList, "hls")
+	addr := selectAddress(addressList, "hls", quality)
 	format := "m3u8"
 	if addr != "" && strings.Contains(addr, ".m3u8") {
 		rewritten := rewriteHLSM3U8(c, headers, addr, v.VideoID)
 		if rewritten != "" {
-			return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: "m3u8", Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID, "m3u8_text": rewritten}}, nil
+			return &extractor.MediaInfo{
+				Site:  "yangcong",
+				Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)),
+				Streams: map[string]extractor.Stream{"default": {
+					Quality:   "best",
+					URLs:      []string{yangcongM3U8DataURL(rewritten)},
+					Format:    "m3u8",
+					NeedMerge: true,
+					Headers:   map[string]string{"Referer": refererURL},
+				}},
+				Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID, "m3u8_text": rewritten, "m3u8_url": addr, "source_type": "m3u8_text"},
+			}, nil
 		}
 	}
 
 	// Fall back: mp4 or any available format
-	addr = selectAddress(addressList, "mp4")
+	addr = selectAddress(addressList, "mp4", quality)
 	if addr == "" {
 		addr = pickAddress(resp)
 	}
@@ -310,7 +321,7 @@ func resolveVideo(c *util.Client, headers map[string]string, v ycVideo) (*extrac
 		return nil, fmt.Errorf("yangcong: no address for video %s", v.VideoID)
 	}
 	format = pickFormat(addr)
-	return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: format, Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID}}, nil
+	return &extractor.MediaInfo{Site: "yangcong", Title: cleanTitle(firstNonEmpty(v.Path, v.Title, v.VideoID)), Streams: map[string]extractor.Stream{"default": {Quality: "best", URLs: []string{addr}, Format: format, NeedMerge: format == "m3u8", Headers: map[string]string{"Referer": refererURL}}}, Extra: map[string]any{"video_id": v.VideoID, "topic_id": v.TopicID}}, nil
 }
 
 // extractAddressList pulls out the address array from the video addresses response.
@@ -348,7 +359,7 @@ func extractAddressList(resp map[string]any) []map[string]any {
 // then clarity priority (fullHigh > high > middle > low for FHD mode),
 // then platform priority (pc > mobile > ""),
 // skipping .ycm URLs.
-func selectAddress(addressList []map[string]any, preferFormat string) string {
+func selectAddress(addressList []map[string]any, preferFormat string, quality string) string {
 	if len(addressList) == 0 {
 		return ""
 	}
@@ -359,8 +370,7 @@ func selectAddress(addressList []map[string]any, preferFormat string) string {
 	} else {
 		formatOrder = []string{"hls", "mp4", "ycm"}
 	}
-	// Clarity priority for FHD mode (default)
-	clarityOrder := []string{"fullHigh", "high", "middle", "low"}
+	clarityOrder := yangcongClarityOrder(quality)
 	// Platform priority
 	platformOrder := []string{"pc", "mobile", ""}
 
@@ -393,6 +403,18 @@ func selectAddress(addressList []map[string]any, preferFormat string) string {
 		}
 	}
 	return ""
+}
+
+func yangcongClarityOrder(quality string) []string {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "2", "hd", "high", "高清":
+		return []string{"high", "fullHigh", "middle", "low"}
+	case "3", "sd", "low", "480", "480p", "标清":
+		return []string{"low", "middle", "high", "fullHigh"}
+	default:
+		return []string{"fullHigh", "high", "middle", "low"}
+	}
 }
 
 func pickAddress(v any) string {
@@ -720,9 +742,13 @@ func rewriteHLSM3U8(c *util.Client, headers map[string]string, m3u8URL string, v
 	if len(keyBytes) == 0 {
 		return ""
 	}
-	// Replace the URI with the hex-encoded key bytes
-	keyHex := hex.EncodeToString(keyBytes)
+	// Replace the URI with an inline hex key accepted by the downloader.
+	keyHex := "0x" + strings.ToUpper(hex.EncodeToString(keyBytes))
 	m3u8Text = strings.Replace(m3u8Text, origURI, keyHex, 1)
 
 	return absolutizeHLSSegments(m3u8Text, m3u8URL)
+}
+
+func yangcongM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
 }

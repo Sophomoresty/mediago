@@ -143,16 +143,21 @@ func (s *Zhaozhao) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	}
 
 	entries := make([]*extractor.MediaInfo, 0, len(videos)+len(files))
-	for i, v := range videos {
-		entry, err := ctx.resolveVideo(v, i+1)
-		if err == nil {
-			entries = append(entries, entry)
+	if !onlyFilesMode(opts) {
+		for i, v := range videos {
+			entry, err := ctx.resolveVideo(v, i+1)
+			if err == nil {
+				entries = append(entries, entry)
+			}
 		}
 	}
 	for i, f := range files {
 		entries = append(entries, ctx.fileEntry(f, i+1))
 	}
 	if len(entries) == 0 {
+		if onlyFilesMode(opts) {
+			return nil, fmt.Errorf("zhaozhao: no courseware files resolved for productId=%s courseId=%s", pid, cid)
+		}
 		return nil, fmt.Errorf("zhaozhao: discovered %d video nodes but no playable polyv manifest resolved", len(videos))
 	}
 	return &extractor.MediaInfo{Site: "zhaozhao", Title: cleanTitle(firstNonEmpty(title, cid, pid)), Entries: entries, Extra: ctx.courseExtra(coursePayloads)}, nil
@@ -452,16 +457,13 @@ func (x *zzContext) resolveVideo(v zzVideo, index int) (*extractor.MediaInfo, er
 	}
 	manifest, err := shared.PolyvPickBestManifest(sec)
 	if err != nil {
-		if len(sec.Data.Paths) == 0 {
-			return nil, err
-		}
-		manifest = sec.Data.Paths[0]
+		return nil, err
 	}
 	manifest = normalizePolyvManifestURL(manifest)
 	if strings.Contains(strings.ToLower(manifestPath(manifest)), ".pdx") {
 		return x.resolvePolyvPDX(v, vid, manifest, playToken, sec, index)
 	}
-	playToken = firstNonEmpty(playToken, sec.Data.Playsafe.Token)
+	playToken = firstNonEmpty(playToken, sec.PlayToken())
 	name := cleanTitle(firstNonEmpty(v.Title, sec.Data.Title, fmt.Sprintf("[%02d]--%s", index, v.VideoID)))
 	extra := map[string]any{"video_id": v.VideoID, "polyv_vid": vid, "secure_url_template": polyvSecureURL}
 	if playToken != "" {
@@ -471,7 +473,7 @@ func (x *zzContext) resolveVideo(v zzVideo, index int) (*extractor.MediaInfo, er
 		extra["child_id"] = v.ChildID
 	}
 	streamURL := manifest
-	if m3u8Text := x.fetchPolyvM3U8Text(manifest, playToken); m3u8Text != "" {
+	if m3u8Text := x.fetchPolyvM3U8Text(manifest, playToken, sec.SeedConst()); m3u8Text != "" {
 		extra["m3u8_text"] = m3u8Text
 		extra["m3u8_url"] = manifest
 		extra["source_type"] = "m3u8_text"
@@ -481,7 +483,7 @@ func (x *zzContext) resolveVideo(v zzVideo, index int) (*extractor.MediaInfo, er
 }
 
 func (x *zzContext) resolvePolyvPDX(v zzVideo, polyvVID, pdxURL, playToken string, sec *shared.PolyvSecure, index int) (*extractor.MediaInfo, error) {
-	playToken = firstNonEmpty(playToken, sec.Data.Playsafe.Token)
+	playToken = firstNonEmpty(playToken, sec.PlayToken())
 	name := cleanTitle(firstNonEmpty(v.Title, sec.Data.Title, fmt.Sprintf("[%02d]--%s", index, v.VideoID)))
 	pdxInfo, err := x.buildPolyvPDXInfo(pdxURL, v.VideoID, playToken)
 	if err != nil {
@@ -803,10 +805,7 @@ func formatPolyvVID(videoID string) string {
 	if strings.HasPrefix(videoID, "http") {
 		return videoID
 	}
-	if strings.Contains(videoID, "_") {
-		return videoID
-	}
-	return videoID + "_" + videoID[:1]
+	return shared.PolyvNormalizeVID(videoID)
 }
 
 func parseDefinitions(v any) []string {
@@ -1007,6 +1006,20 @@ func pickFormat(rawURL, hint string) string {
 	return "pdf"
 }
 
+func onlyFilesMode(opts *extractor.ExtractOpts) bool {
+	if opts == nil {
+		return false
+	}
+	q := strings.ToLower(strings.TrimSpace(opts.Quality))
+	q = strings.NewReplacer("-", "", "_", "", " ", "").Replace(q)
+	switch q {
+	case "2", "pdf", "onlypdf", "courseware", "material", "materials", "document", "documents", "file", "files", "课件", "资料":
+		return true
+	default:
+		return false
+	}
+}
+
 func (x *zzContext) downloadHeaders() map[string]string {
 	h := map[string]string{
 		"Referer":    refererURL,
@@ -1020,7 +1033,7 @@ func (x *zzContext) downloadHeaders() map[string]string {
 	return h
 }
 
-func (x *zzContext) fetchPolyvM3U8Text(manifest, token string) string {
+func (x *zzContext) fetchPolyvM3U8Text(manifest, token, seedConst string) string {
 	if manifest == "" || !strings.Contains(strings.ToLower(manifest), ".m3u8") {
 		return ""
 	}
@@ -1031,7 +1044,7 @@ func (x *zzContext) fetchPolyvM3U8Text(manifest, token string) string {
 	}
 	text = absolutizeM3U8Text(text, manifest)
 	if token != "" {
-		if rewritten, err := shared.PolyvRewriteM3U8Keys(x.c, text, token, refererURL); err == nil && rewritten != "" {
+		if rewritten, err := shared.PolyvRewriteM3U8KeysWithOptions(x.c, text, shared.PolyvRewriteOptions{Token: token, Referer: refererURL, ManifestURL: manifest, SeedConst: seedConst}); err == nil && rewritten != "" {
 			text = inlineHexKeyURIs(rewritten)
 		}
 	}

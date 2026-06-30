@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
+	"github.com/Sophomoresty/mediago/internal/extractor/shared"
 	"github.com/Sophomoresty/mediago/internal/util"
 )
 
@@ -37,6 +38,49 @@ func mageduDirectVideoEntry(sess *mageduSession, item mageduItem) *extractor.Med
 		}},
 		Extra: map[string]any{"source_type": "direct", "section_id": item.SectionID, "video_storage_id": item.StorageID},
 	}
+}
+
+func mageduPolyvPDXEntry(c *util.Client, item mageduItem, polyvVID, pdxURL, token string, sec *shared.PolyvSecure, headers map[string]string) (*extractor.MediaInfo, error) {
+	info, err := shared.PolyvResolvePDX(c, shared.PolyvPDXOptions{
+		VideoID:       item.VideoID,
+		PDXURL:        pdxURL,
+		PlaySafeToken: token,
+		Headers:       headers,
+		Secure:        sec,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("magedu polyv pdx %s: %w", polyvVID, err)
+	}
+	extra := map[string]any{
+		"video_id":         item.VideoID,
+		"polyv_vid":        polyvVID,
+		"section_id":       item.SectionID,
+		"video_storage_id": item.StorageID,
+		"playSafeToken":    token,
+		"token":            info.PlaySafeToken,
+		"source_type":      "polyv_pdx",
+		"m3u8_meta":        info.M3U8Meta(),
+	}
+	for k, v := range info.ExtraMap() {
+		extra[k] = v
+	}
+	return &extractor.MediaInfo{
+		Site:  "magedu",
+		Title: item.Title,
+		Streams: map[string]extractor.Stream{"default": {
+			Quality:   "default",
+			URLs:      []string{mageduM3U8DataURL(info.M3U8Text)},
+			Format:    "m3u8",
+			Size:      item.Size,
+			NeedMerge: true,
+			Headers:   headers,
+			Extra: map[string]any{
+				"cryptor":   "polyv_pdx",
+				"m3u8_meta": info.M3U8Meta(),
+			},
+		}},
+		Extra: extra,
+	}, nil
 }
 
 func mageduSectionMaterials(c *util.Client, sess *mageduSession, sec map[string]any, prefix []int) []mageduItem {

@@ -23,7 +23,7 @@ type qcloudPlayInfo struct {
 	Raw        map[string]any
 }
 
-func qcloudMediaSource(c *util.Client, auth map[string]string) xsSource {
+func qcloudMediaSource(c *util.Client, auth map[string]string, quality string) xsSource {
 	overlayKey, overlayIV := newOverlayText(), newOverlayText()
 	q := url.Values{"keyId": {"1"}, "psign": {auth["psign"]}}
 	if iv := rsaEncryptOverlay(overlayIV); iv != "" {
@@ -49,7 +49,7 @@ func qcloudMediaSource(c *util.Client, auth map[string]string) xsSource {
 		extra["size"] = info.Size
 	}
 	if info.MasterURL != "" {
-		if finalURL, text := loadFinalQcloudM3U8(c, info); finalURL != "" {
+		if finalURL, text := loadFinalQcloudM3U8(c, info, xsteachTargetQualityRank(quality)); finalURL != "" {
 			if text != "" {
 				extra["m3u8_text"] = text
 				extra["source_type"] = "m3u8_text"
@@ -88,7 +88,7 @@ func parseQcloudPlayInfo(root map[string]any, overlayKey, overlayIV string) qclo
 	return info
 }
 
-func loadFinalQcloudM3U8(c *util.Client, info qcloudPlayInfo) (string, string) {
+func loadFinalQcloudM3U8(c *util.Client, info qcloudPlayInfo, targetRank int) (string, string) {
 	if info.MasterURL == "" {
 		return "", ""
 	}
@@ -97,7 +97,7 @@ func loadFinalQcloudM3U8(c *util.Client, info qcloudPlayInfo) (string, string) {
 	if err != nil || !strings.Contains(master, "#EXTM3U") {
 		return info.MasterURL, ""
 	}
-	variantURL, size := selectQcloudVariant(master, info.MasterURL, info)
+	variantURL, size := selectQcloudVariant(master, info.MasterURL, info, targetRank)
 	if variantURL == "" {
 		variantURL = info.MasterURL
 	}
@@ -126,7 +126,7 @@ type qcloudVariant struct {
 	Size      int64
 }
 
-func selectQcloudVariant(masterText, masterURL string, info qcloudPlayInfo) (string, int64) {
+func selectQcloudVariant(masterText, masterURL string, info qcloudPlayInfo, targetRank int) (string, int64) {
 	lines := strings.Split(masterText, "\n")
 	variants := []qcloudVariant{}
 	streamIndex := 0
@@ -166,6 +166,17 @@ func selectQcloudVariant(masterText, masterURL string, info qcloudPlayInfo) (str
 		}
 		return variants[i].Rank > variants[j].Rank
 	})
+	if targetRank > 0 {
+		for _, variant := range variants {
+			if variant.Rank > 0 && variant.Rank <= int64(targetRank) {
+				return variant.URL, variant.Size
+			}
+		}
+		if targetRank <= 480 {
+			lowest := variants[len(variants)-1]
+			return lowest.URL, lowest.Size
+		}
+	}
 	return variants[0].URL, variants[0].Size
 }
 

@@ -134,3 +134,33 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestOnlyFilesModeSkipsVideoEntries(t *testing.T) {
+	fixture := loadGoldenFixture(t)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(fixture)
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+
+	media, err := (&Zhengbao{}).Extract("https://www.chinaacc.com/course?courseIds=1001&cwareIDs=2001&identity=abc", &extractor.ExtractOpts{Cookies: jar, Quality: "4"})
+	if err != nil {
+		t.Fatalf("Extract only-files returned error: %v", err)
+	}
+	if len(media.Entries) != 1 {
+		t.Fatalf("entries = %d, want only file entry", len(media.Entries))
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://media.example.com/zhengbao/handout.pdf" {
+		t.Fatalf("playable URL = %q, want handout PDF", got)
+	}
+}

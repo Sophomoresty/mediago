@@ -134,3 +134,57 @@ func TestExtractMock(t *testing.T) {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
 }
+
+func TestOnlyFilesModeSkipsLessonPlaybackAndVideoAttachments(t *testing.T) {
+	var lessonPlaybackCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/ep/user/profile/"):
+			_, _ = w.Write([]byte(`{"status_code":0}`))
+		case strings.Contains(r.URL.Path, "/ep/student/learn_data_v2/"):
+			_, _ = w.Write([]byte(`{"data":{"student_course":{"data":[{"course_info":{"course_id":"1001","title":"Course"}}]}}}`))
+		case strings.Contains(r.URL.Path, "/ep/study_pc/course/lessons/") || strings.Contains(r.URL.Path, "/classroom/playback/") || strings.Contains(r.URL.Host, "vod.bytedanceapi.com"):
+			lessonPlaybackCalled = true
+			_, _ = w.Write([]byte(`{"data":{"data":[]}}`))
+		case strings.Contains(r.URL.Path, "/ep/student/course_resource/"):
+			_, _ = w.Write([]byte(`{"data":{"node_list":["doc","video"],"object_map":{"doc":{"obj_type":1,"obj_name":"handout.pdf","token":"doc-token"},"video":{"obj_type":1,"obj_name":"attached.mp4","token":"video-token"}}}}`))
+		case strings.Contains(r.URL.Path, "/ep/student/preview_course_resource/"):
+			switch r.URL.Query().Get("token") {
+			case "doc-token":
+				_, _ = w.Write([]byte(`{"data":{"preview_url":"https://cdn.example.com/handout.pdf","file_ext":"pdf"}}`))
+			case "video-token":
+				_, _ = w.Write([]byte(`{"data":{"preview_url":"https://cdn.example.com/attached.mp4","file_ext":"mp4"}}`))
+			default:
+				_, _ = w.Write([]byte(`{"data":{}}`))
+			}
+		default:
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("new cookie jar: %v", err)
+	}
+
+	media, err := (&Xuelang{}).Extract("https://www.iyincaishijiao.com/course/1001?course_id=1001", &extractor.ExtractOpts{Cookies: jar, Quality: "4"})
+	if err != nil {
+		t.Fatalf("Extract returned error in only-files mode: %v", err)
+	}
+	if lessonPlaybackCalled {
+		t.Fatalf("only-files mode called lesson/playback APIs")
+	}
+	if media == nil || len(media.Entries) != 1 {
+		t.Fatalf("entries = %#v, want only PDF file entry", media)
+	}
+	got := goldenFirstPlayableURL(media)
+	if got != "https://cdn.example.com/handout.pdf" {
+		t.Fatalf("only-files URL = %q, want handout PDF", got)
+	}
+}

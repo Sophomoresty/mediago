@@ -29,15 +29,16 @@ const (
 var moocPatterns = []string{
 	// Source: Mooc_Config courses_re – Icve_Mooc was not in courses_re, but the
 	// module uses www.icve.com.cn URLs with courseId / courseid params.
-	// Covers: portal_new/courseinfo, study/directory, Portal/courseinfo
+	// Covers only the MOOC course-info and study-directory paths.  Do not use a
+	// broad www.icve.com.cn + courseId fallback here: Icve_Weike microstudy URLs
+	// also carry courseId and must route to IcveWeike.
 	`\s*https?://www\.icve\.com\.cn/(?:portal_new/courseinfo|study/directory|Portal/courseinfo).*?(?:courseId|courseid)=(?P<cid1>[-\w]+)`,
-	// Broad fallback: www.icve.com.cn with courseid= anywhere
-	`\s*https?://www\.icve\.com\.cn/.*?(?:courseId|courseid)=(?P<cid2>[-\w]+)`,
 }
 
 var moocCIDRe = regexp.MustCompile(
 	`(?i)https?://www\.icve\.com\.cn/.*?(?:courseId|courseid)=([-\w]+)`,
 )
+var moocJoinOKRe = regexp.MustCompile(`"code"\s*:\s*[12]`)
 
 func init() {
 	extractor.Register(&IcveMooc{}, extractor.SiteInfo{Name: "IcveMooc", URL: "www.icve.com.cn", NeedAuth: true})
@@ -99,7 +100,7 @@ func newMoocCtx(jar http.CookieJar, mode int) *moocCtx {
 		"Sec-Ch-Ua-Mobile":   "?0",
 		"Sec-Ch-Ua":          `"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"`,
 		"Referer":            referer,
-		"cookie":             cookieHeader(jar, []string{referer + "/", "https://www.icve.com.cn/"}),
+		"cookie":             cookieHeader(jar, icveCookieOrigins("https://www.icve.com.cn/")),
 		"User-Agent":         util.RandomUA(),
 	}
 	return &moocCtx{c: c, headers: headers, mode: mode}
@@ -125,6 +126,7 @@ func parseMoocCID(raw string) string {
 // loadTitle calls getHeadInfo_upgrade to get Title + ProjectName.
 // Source: Icve_Mooc._get_title
 func (x *moocCtx) loadTitle() error {
+	_ = x.joinCourse()
 	body, err := x.c.PostForm(moocURLHeadInfo, map[string]string{"courseid": x.cid}, x.headers)
 	if err != nil {
 		return fmt.Errorf("icve_mooc: load title: %w", err)
@@ -139,6 +141,14 @@ func (x *moocCtx) loadTitle() error {
 		x.title = cleanTitle(title)
 	}
 	return nil
+}
+
+func (x *moocCtx) joinCourse() bool {
+	if strings.TrimSpace(x.cid) == "" {
+		return false
+	}
+	body, err := x.c.PostForm(moocURLJoin, map[string]string{"courseid": x.cid}, x.headers)
+	return err == nil && moocJoinOKRe.MatchString(body)
 }
 
 type moocItem struct {
@@ -217,7 +227,7 @@ func collectMoocItems(cells []map[string]any, prefix []int) []moocItem {
 func (x *moocCtx) getSourceURL(cellID string) string {
 	body, err := x.c.PostForm(moocURLSource, map[string]string{
 		"enterType": "study",
-		"courseId":   x.cid,
+		"courseId":  x.cid,
 		"cellId":    cellID,
 	}, x.headers)
 	if err != nil {

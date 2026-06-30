@@ -3,9 +3,11 @@ package chaoxing
 import (
 	"fmt"
 	htmlpkg "html"
+	"io"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Sophomoresty/mediago/internal/extractor"
 	"github.com/Sophomoresty/mediago/internal/util"
@@ -63,10 +65,9 @@ func (x *chaoxingContext) resolveCourse(rawURL string) (*extractor.MediaInfo, st
 			entries = appendUniqueEntry(entries, entry, seen)
 		}
 	}
-	// Course-data attachment/material branch (Chaoxing_Course._get_file_list).
-	// Only runs when an openc is available; the source probes for it but the
-	// probe relies on transfer-redirect parsing, so when openc is absent we
-	// fail closed for this branch rather than guess a value.
+	if x.openc == "" {
+		x.probeOpenc(chapters)
+	}
 	if x.openc != "" {
 		for _, entry := range x.resolveFileEntries(x.openc) {
 			entries = appendUniqueEntry(entries, entry, seen)
@@ -78,7 +79,7 @@ func (x *chaoxingContext) resolveCourse(rawURL string) (*extractor.MediaInfo, st
 		}
 	}
 	if x.shouldTryPublicCourseFallback(rawURL, page, chapters, entries) {
-		for _, entry := range x.resolvePublicCourseEntries() {
+		for _, entry := range x.resolveXueyinMoocCourse() {
 			entries = appendUniqueEntry(entries, entry, seen)
 		}
 	}
@@ -196,6 +197,122 @@ func (x *chaoxingContext) buildCoursePageURL() string {
 	return x.abs("/mycourse/studentcourse") + "?" + values.Encode()
 }
 
+func (x *chaoxingContext) buildChapterURL(pid string) string {
+	enc := firstNonEmpty(x.enc, x.oldEnc)
+	if pid == "" || x.courseID == "" || x.clazzID == "" || enc == "" {
+		return ""
+	}
+	values := url.Values{}
+	values.Set("chapterId", pid)
+	values.Set("courseId", x.courseID)
+	values.Set("clazzid", x.clazzID)
+	if x.cpi != "" {
+		values.Set("cpi", x.cpi)
+	}
+	values.Set("enc", enc)
+	if x.newCourse {
+		values.Set("mooc2", "1")
+	}
+	path := "/mycourse/studentstudy"
+	if x.newCourse && isChaoxingSchoolHost(x.sourceHost) {
+		path = strings.TrimRight(x.portalPrefix(), "/") + path
+	}
+	return x.abs(path) + "?" + values.Encode()
+}
+
+func (x *chaoxingContext) buildTransferURL(pid string) string {
+	chapterURL := x.buildChapterURL(pid)
+	if chapterURL == "" || x.courseID == "" || x.clazzID == "" {
+		return ""
+	}
+	refer := chapterURL
+	if parsed, err := url.Parse(chapterURL); err == nil {
+		refer = parsed.RequestURI()
+	}
+	values := url.Values{}
+	values.Set("moocId", x.courseID)
+	values.Set("clazzid", x.clazzID)
+	values.Set("linkTime", fmt.Sprint(time.Now().UnixMilli()))
+	values.Set("ut", "s")
+	values.Set("refer", refer)
+	path := "/mycourse/transfer"
+	if x.newCourse && isChaoxingSchoolHost(x.sourceHost) {
+		path = strings.TrimRight(x.portalPrefix(), "/") + path
+	}
+	return x.abs(path) + "?" + values.Encode()
+}
+
+func (x *chaoxingContext) portalPrefix() string {
+	prefix := strings.TrimRight(x.pathPrefix, "/")
+	if strings.Contains(prefix, "/mooc-ans") {
+		return prefix
+	}
+	if isChaoxingSchoolHost(x.sourceHost) {
+		return "/mooc-ans"
+	}
+	return ""
+}
+
+func (x *chaoxingContext) probeOpenc(chapters []chaoxingChapter) string {
+	if x.openc != "" || x.newCourse {
+		return x.openc
+	}
+	pid := ""
+	for _, ch := range chapters {
+		if ch.ID != "" {
+			pid = ch.ID
+			break
+		}
+	}
+	if pid == "" {
+		return x.openc
+	}
+	transferURL := x.buildTransferURL(pid)
+	if transferURL == "" {
+		return x.openc
+	}
+	resp, err := x.c.Get(transferURL, x.headers)
+	if err != nil || resp == nil {
+		return x.openc
+	}
+	defer resp.Body.Close()
+	var candidates []string
+	if resp.Request != nil && resp.Request.URL != nil {
+		candidates = append(candidates, resp.Request.URL.String())
+	}
+	if body, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20)); rerr == nil && len(body) > 0 {
+		text := string(body)
+		x.extractAccessFromText(text)
+		candidates = append(candidates, text)
+	}
+	for _, candidate := range candidates {
+		if openc := extractOpencFromTransfer(candidate); openc != "" {
+			x.openc = openc
+			return x.openc
+		}
+	}
+	return x.openc
+}
+
+func extractOpencFromTransfer(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	candidates := []string{htmlpkg.UnescapeString(text)}
+	for i := 0; i < len(candidates) && i < 4; i++ {
+		if decoded, err := url.QueryUnescape(candidates[i]); err == nil && decoded != candidates[i] {
+			candidates = append(candidates, decoded)
+		}
+	}
+	re := regexp.MustCompile(`(?i)openc(?:=|%3d)([\w\d]+)`)
+	for _, candidate := range candidates {
+		if m := re.FindStringSubmatch(candidate); len(m) > 1 {
+			return m[1]
+		}
+	}
+	return ""
+}
+
 func (x *chaoxingContext) newCoursePrefix() string {
 	prefix := strings.TrimRight(x.pathPrefix, "/")
 	if strings.HasPrefix(prefix, "/mooc2-ans") {
@@ -234,7 +351,7 @@ func (x *chaoxingContext) extractAccessFromURL(raw string) {
 				}
 			}
 		}
-		if strings.Contains(strings.ToLower(u.Path), "/mooc2-ans/") {
+		if strings.Contains(strings.ToLower(u.Path), "/mooc2-ans/") && strings.Contains(strings.ToLower(u.Path), "/mycourse/") {
 			x.newCourse = true
 		}
 	}
@@ -243,7 +360,7 @@ func (x *chaoxingContext) extractAccessFromURL(raw string) {
 	x.enc = firstNonEmpty(x.enc, regexpFirst(raw, `(?i)(?:\?|&|&amp;)enc=([a-z0-9]+)`), regexpFirst(raw, `(?i)["']enc["']\s*[:=]\s*["']([a-z0-9]+)`))
 	x.cpi = firstNonEmpty(x.cpi, regexpFirst(raw, `(?i)(?:\?|&|&amp;)cpi=([0-9]+)`), regexpFirst(raw, `(?i)["']cpi["']\s*[:=]\s*["']?([0-9]+)`))
 	x.openc = firstNonEmpty(x.openc, regexpFirst(raw, `(?i)(?:\?|&|&amp;)openc=([\w\d]+)`), regexpFirst(raw, `(?i)["']openc["']\s*[:=]\s*["']([\w\d]+)`))
-	if strings.Contains(strings.ToLower(raw), "/mooc2-ans/") || regexpFirst(raw, `(?i)(?:\?|&|&amp;)mooc2=([01])`) == "1" {
+	if (strings.Contains(strings.ToLower(raw), "/mooc2-ans/") && strings.Contains(strings.ToLower(raw), "/mycourse/")) || regexpFirst(raw, `(?i)(?:\?|&|&amp;)mooc2=([01])`) == "1" {
 		x.newCourse = true
 	}
 }
@@ -322,6 +439,12 @@ func collectChaoxingChapters(text string) []chaoxingChapter {
 	}
 	for _, m := range regexp.MustCompile(`(?is)<a[^>]+href=["'][^"']*chapterId=(\d+)[^"']*["'][^>]*>([\s\S]*?)</a>`).FindAllStringSubmatch(text, -1) {
 		add(m[1], stripTags(m[2]))
+	}
+	for _, m := range regexp.MustCompile(`(?is)<a[^>]+href=["'][^"']*knowledgeId=(\d+)[^"']*["'][^>]*>([\s\S]*?)</a>`).FindAllStringSubmatch(text, -1) {
+		add(m[1], stripTags(m[2]))
+	}
+	for _, m := range regexp.MustCompile(`(?is)<span[^>]+onclick=(?:"[^"]*knowledgeId=(\d+)[^"]*"|'[^']*knowledgeId=(\d+)[^']*')[^>]*>([\s\S]*?)</span>`).FindAllStringSubmatch(text, -1) {
+		add(firstNonEmpty(m[1], m[2]), stripTags(m[3]))
 	}
 	return out
 }

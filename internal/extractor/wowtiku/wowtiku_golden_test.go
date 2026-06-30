@@ -181,6 +181,28 @@ func TestFirstStreamURLHandlesSparseStreams(t *testing.T) {
 	}
 }
 
+func TestFirstCourseIDRejectsEmptyCourseList(t *testing.T) {
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case r.Host == "new.wowtiku.net" && r.URL.Path == "/goods/buy_lists":
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case r.Host == "new.wowtiku.net" && r.URL.Path == "/platform/lists":
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	got, err := firstCourseID(util.NewClient(), wtSession{token: "token"})
+	if err == nil {
+		t.Fatalf("firstCourseID error = nil, got course %q", got)
+	}
+	if !strings.Contains(err.Error(), "purchased course list is empty") {
+		t.Fatalf("firstCourseID error = %v, want purchased course list is empty", err)
+	}
+}
+
 func TestExtractMock(t *testing.T) {
 	fixtures := loadFixtures(t)
 	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,4 +238,75 @@ func TestExtractMock(t *testing.T) {
 	if !strings.Contains(got, "cdn.example.com/wowtiku.mp4") {
 		t.Fatalf("playable URL %q does not contain expected fixture URL", got)
 	}
+}
+
+func TestExtractOnlyPDFSkipsVideosAndKeepsFiles(t *testing.T) {
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case r.Host == "www.wowtiku.net" && r.Method == http.MethodGet && r.URL.Path == "/question_bank/user/user_info":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user_id":"u-1"}}`))
+		case r.Host == "new.wowtiku.net" && r.Method == http.MethodGet && r.URL.Path == "/goods/sg_detail":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"name":"Only PDF Course","videos":[{"title":"Should Skip","video_url":"https://cdn.example.com/skip.mp4"}],"docs":[{"name":"Keep Doc","file_url":"https://cdn.example.com/keep.pdf"}]}}`))
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	jar := newJar()
+	setCookies(t, jar, "https://www.wowtiku.com/", &http.Cookie{Name: "token", Value: "wowtiku-token"})
+
+	info, err := (&Wowtiku{}).Extract("https://www.wowtiku.com/#/course?id=1001", &extractor.ExtractOpts{Cookies: jar, Quality: "4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	urls := allPlayableURLs(info)
+	if containsSubstring(urls, "skip.mp4") {
+		t.Fatalf("ONLY_PDF resolved video URL unexpectedly: %#v", urls)
+	}
+	if !containsSubstring(urls, "keep.pdf") {
+		t.Fatalf("ONLY_PDF URLs missing courseware: %#v", urls)
+	}
+}
+
+func TestMediaFormatKeepsDirectExtension(t *testing.T) {
+	tests := map[string]string{
+		"https://cdn.example.com/audio.mp3": "mp3",
+		"https://cdn.example.com/movie.avi": "avi",
+		"https://cdn.example.com/live.m3u8": "m3u8",
+		"https://cdn.example.com/noext":     "mp4",
+	}
+	for raw, want := range tests {
+		if got := mediaFormat(raw); got != want {
+			t.Fatalf("mediaFormat(%q)=%q, want %q", raw, got, want)
+		}
+	}
+}
+
+func allPlayableURLs(mi *extractor.MediaInfo) []string {
+	if mi == nil {
+		return nil
+	}
+	var out []string
+	for _, stream := range mi.Streams {
+		for _, u := range stream.URLs {
+			if strings.TrimSpace(u) != "" {
+				out = append(out, strings.TrimSpace(u))
+			}
+		}
+	}
+	for _, entry := range mi.Entries {
+		out = append(out, allPlayableURLs(entry)...)
+	}
+	return out
+}
+
+func containsSubstring(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }

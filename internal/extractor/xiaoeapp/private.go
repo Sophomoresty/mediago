@@ -385,6 +385,30 @@ func h5JSONAPI(c *util.Client, sess xeSession, domain, path string, params map[s
 	return root
 }
 
+func postH5JSONAPI(c *util.Client, sess xeSession, domain, path string, body map[string]any, appID, cUserID string) map[string]any {
+	api := "https://" + domain + path
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil
+	}
+	h := h5Headers(c, sess, appID, cUserID, "https://"+domain+"/")
+	h["Content-Type"] = "application/json"
+	resp, err := c.Post(api, strings.NewReader(string(payload)), h)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return nil
+	}
+	var root map[string]any
+	if json.Unmarshal(buf.Bytes(), &root) != nil {
+		return nil
+	}
+	return root
+}
+
 func postH5API(c *util.Client, sess xeSession, domain, path string, form url.Values, appID, cUserID string) map[string]any {
 	api := "https://" + domain + path
 	h := h5Headers(c, sess, appID, cUserID, "https://"+domain+"/")
@@ -489,8 +513,10 @@ func firstURLInString(raw string) string {
 		raw = string(b)
 	}
 	re := regexp.MustCompile(`https?://[^\s"'<>\\]+`)
-	if m := re.FindString(raw); m != "" {
-		return normalizeURL(m)
+	for _, m := range re.FindAllString(raw, -1) {
+		if u := normalizeURL(m); isUsableXiaoeURL(u) {
+			return u
+		}
 	}
 	return ""
 }
@@ -532,8 +558,8 @@ func bestURLFromDecodedVideoList(v any) string {
 }
 
 func directXiaoeURL(m map[string]any) string {
-	for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "videoAudioUrl", "video_audio_url", "audio_m3u8_url", "audio_url", "epub_url", "aliveVideoUrl", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "play_url", "playUrl", "url", "m3u8_url", "file_url", "download_url", "downloadUrl", "material_url"} {
-		if u := normalizeURL(val(m, k)); strings.HasPrefix(u, "http") || strings.HasPrefix(u, "//") {
+	for _, k := range []string{"video_m3u8_url", "video_hls", "video_url", "videoAudioUrl", "video_audio_url", "audio_m3u8_url", "audio_url", "epub_url", "aliveVideoUrl", "alive_video_url", "aliveVideoMp4Url", "miniAliveVideoUrl", "aliveReviewUrl", "play_url", "playUrl", "url", "m3u8_url", "file_url", "download_url", "downloadUrl", "material_url", "doc_url", "document_url", "courseware_url"} {
+		if u := normalizeURL(val(m, k)); isUsableXiaoeURL(u) {
 			return normalizeURL(u)
 		}
 	}

@@ -4,9 +4,11 @@ package zlketang
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -68,10 +70,11 @@ type Zlketang struct{}
 func (s *Zlketang) Patterns() []string { return patterns }
 
 type zlContext struct {
-	c       *util.Client
-	headers map[string]string
-	cid     string
-	pid     string
+	c         *util.Client
+	headers   map[string]string
+	cid       string
+	pid       string
+	onlyFiles bool
 }
 
 type zlNode struct {
@@ -105,6 +108,11 @@ type zlFile struct {
 	Format string
 }
 
+type zlPlaySource struct {
+	URL   string
+	Extra map[string]any
+}
+
 func (s *Zlketang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
 	if opts == nil || opts.Cookies == nil {
 		return nil, fmt.Errorf("zlketang requires login cookies")
@@ -113,7 +121,7 @@ func (s *Zlketang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	if cid == "" && pid == "" {
 		return nil, fmt.Errorf("zlketang: cannot parse course_id/product_id from URL")
 	}
-	ctx := &zlContext{c: util.NewClient(), headers: headersFromJar(opts.Cookies), cid: cid, pid: pid}
+	ctx := &zlContext{c: util.NewClient(), headers: headersFromJar(opts.Cookies), cid: cid, pid: pid, onlyFiles: zlketangOnlyFilesMode(opts.Quality)}
 	ctx.c.SetCookieJar(opts.Cookies)
 	_, _ = ctx.requestJSON(checkURL, nil, refererURL)
 
@@ -127,12 +135,15 @@ func (s *Zlketang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 	for i, node := range nodes {
 		detailPayloads := ctx.loadNodePayloads(node)
 		files = append(files, collectFiles(detailPayloads, node.Title)...)
-		videoData := ctx.getVideoData(node)
-		videos = append(videos, parseVideoList(videoData, node, i+1)...)
-		videos = append(videos, parseVideoList(detailPayloads, node, i+1)...)
+		if !ctx.onlyFiles {
+			videoData := ctx.getVideoData(node)
+			videos = append(videos, parseVideoList(videoData, node, i+1)...)
+			videos = append(videos, parseVideoList(detailPayloads, node, i+1)...)
+		}
 	}
 	files = append(files, collectFiles(payloads, title)...)
-	if len(videos) == 0 {
+	files = uniqueZLFiles(files)
+	if !ctx.onlyFiles && len(videos) == 0 {
 		videos = append(videos, collectDirectVideos(payloads, title)...)
 	}
 	if len(videos) == 0 && len(files) == 0 {
@@ -152,6 +163,16 @@ func (s *Zlketang) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 		return nil, fmt.Errorf("zlketang: discovered nodes but no playable URL resolved")
 	}
 	return &extractor.MediaInfo{Site: "zlketang", Title: cleanTitle(firstNonEmpty(title, cid, pid)), Entries: entries}, nil
+}
+
+func zlketangOnlyFilesMode(quality string) bool {
+	mode := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(quality)))
+	switch mode {
+	case "2", "pdf", "onlypdf", "file", "files", "material", "materials", "courseware", "coursewares", "attachment", "attachments", "资料", "课件":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseIDs(raw string) (courseID, productID string) {
@@ -394,8 +415,11 @@ func (x *zlContext) resolveVideo(v zlVideo, index int) (*extractor.MediaInfo, er
 			}
 		}
 		if playURL == "" && len(data) > 0 {
-			if u := x.requestQCloudPlayInfo(data, v); u != "" {
-				playURL = u
+			if source := x.requestQCloudPlayInfo(data, v); source.URL != "" {
+				playURL = source.URL
+				for k, val := range source.Extra {
+					extra[k] = val
+				}
 			}
 		}
 		for k, val := range data {
@@ -403,8 +427,11 @@ func (x *zlContext) resolveVideo(v zlVideo, index int) (*extractor.MediaInfo, er
 		}
 	}
 	if playURL == "" && v.VideoID != "" {
-		if u := x.requestQCloudPlayInfo(v.PlayAuth, v); u != "" {
-			playURL = u
+		if source := x.requestQCloudPlayInfo(v.PlayAuth, v); source.URL != "" {
+			playURL = source.URL
+			for k, val := range source.Extra {
+				extra[k] = val
+			}
 		}
 	}
 	if playURL == "" {
@@ -580,28 +607,57 @@ func pickDomain(v any) string {
 	return ""
 }
 
-func (x *zlContext) requestQCloudPlayInfo(playAuth map[string]any, v zlVideo) string {
+func (x *zlContext) requestQCloudPlayInfo(playAuth map[string]any, v zlVideo) zlPlaySource {
 	appID := firstNonEmpty(firstString(playAuth, "app_id", "appId"), firstString(v.PlayAuth, "app_id", "appId"))
 	videoID := firstNonEmpty(firstString(playAuth, "txvid", "video_id", "videoId", "fileId"), v.VideoID)
 	if appID == "" || videoID == "" {
-		return ""
+		return zlPlaySource{}
 	}
 	params := map[string]string{"psign": firstString(playAuth, "p_sign", "psign"), "keyId": "1"}
-	if overlay := genOverlay(); overlay != "" {
-		params["cipheredOverlayKey"] = rsaEncryptOverlay(overlay)
-		params["cipheredOverlayIv"] = rsaEncryptOverlay(overlay)
+	overlayKey, overlayIV := genOverlay(), genOverlay()
+	if overlayKey != "" {
+		params["cipheredOverlayKey"] = rsaEncryptOverlay(overlayKey)
+	}
+	if overlayIV != "" {
+		params["cipheredOverlayIv"] = rsaEncryptOverlay(overlayIV)
 	}
 	api := fmt.Sprintf(qcloudPlayAPITmpl, url.PathEscape(appID), url.PathEscape(videoID))
 	resp, err := x.requestJSON(api, params, refererURL)
 	if err != nil {
-		return ""
+		return zlPlaySource{}
+	}
+	info := parseZLQCloudPlayInfo(resp, overlayKey, overlayIV)
+	extra := map[string]any{"source_type": "qcloud", "qcloud_app_id": appID, "qcloud_file_id": videoID}
+	if info.DRMToken != "" {
+		extra["drm_token"] = info.DRMToken
+	}
+	if info.MasterURL != "" {
+		finalURL, text := x.loadFinalQCloudM3U8(info)
+		if text != "" {
+			extra["source_type"] = "m3u8_text"
+			extra["m3u8_text"] = text
+			extra["m3u8_url"] = firstNonEmpty(finalURL, info.MasterURL)
+			return zlPlaySource{URL: zlM3U8DataURL(text), Extra: extra}
+		}
+		if finalURL != "" {
+			return zlPlaySource{URL: finalURL, Extra: extra}
+		}
+		return zlPlaySource{URL: info.MasterURL, Extra: extra}
 	}
 	for _, u := range extractMediaURLs(resp) {
 		if strings.Contains(strings.ToLower(u), ".m3u8") || strings.Contains(strings.ToLower(u), ".mp4") {
-			return u
+			if strings.Contains(strings.ToLower(u), ".m3u8") {
+				if finalURL, text := x.loadFinalQCloudM3U8(zlQCloudPlayInfo{MasterURL: u, DRMToken: info.DRMToken, OverlayKey: overlayKey, OverlayIV: overlayIV}); text != "" {
+					extra["source_type"] = "m3u8_text"
+					extra["m3u8_text"] = text
+					extra["m3u8_url"] = firstNonEmpty(finalURL, u)
+					return zlPlaySource{URL: zlM3U8DataURL(text), Extra: extra}
+				}
+			}
+			return zlPlaySource{URL: u, Extra: extra}
 		}
 	}
-	return ""
+	return zlPlaySource{}
 }
 
 func genOverlay() string {
@@ -630,6 +686,215 @@ func rsaEncryptOverlay(text string) string {
 		return ""
 	}
 	return hex.EncodeToString(enc)
+}
+
+type zlQCloudPlayInfo struct {
+	MasterURL  string
+	DRMToken   string
+	OverlayKey string
+	OverlayIV  string
+}
+
+func parseZLQCloudPlayInfo(root map[string]any, overlayKey, overlayIV string) zlQCloudPlayInfo {
+	info := zlQCloudPlayInfo{OverlayKey: overlayKey, OverlayIV: overlayIV}
+	for _, m := range walkMaps(root) {
+		if info.MasterURL == "" {
+			if ml := asMap(m["masterPlayList"]); len(ml) > 0 {
+				info.MasterURL = normalizeMediaURL(firstString(ml, "url", "playUrl", "playURL"), nil)
+			}
+		}
+		if info.MasterURL == "" {
+			info.MasterURL = normalizeMediaURL(firstString(m, "url", "playUrl", "playURL", "m3u8_url", "master_m3u8_url", "hls"), m)
+		}
+		if info.DRMToken == "" {
+			info.DRMToken = firstString(m, "drmToken", "drm_token")
+		}
+	}
+	return info
+}
+
+func (x *zlContext) loadFinalQCloudM3U8(info zlQCloudPlayInfo) (string, string) {
+	if info.MasterURL == "" || !strings.Contains(strings.ToLower(info.MasterURL), ".m3u8") {
+		return info.MasterURL, ""
+	}
+	h := map[string]string{"Referer": refererURL, "User-Agent": x.headers["User-Agent"]}
+	body, err := x.c.GetString(info.MasterURL, h)
+	if err != nil || !strings.Contains(body, "#EXTM3U") {
+		return info.MasterURL, ""
+	}
+	variantURL := info.MasterURL
+	text := body
+	if strings.Contains(body, "#EXT-X-STREAM-INF") {
+		variantURL = selectZLQCloudVariant(body, info.MasterURL)
+		if variantURL != info.MasterURL {
+			if b, err := x.c.GetString(variantURL, h); err == nil && strings.Contains(b, "#EXTM3U") {
+				text = b
+			}
+		}
+	}
+	return variantURL, x.rewriteZLQCloudM3U8(text, variantURL, info)
+}
+
+func selectZLQCloudVariant(masterText, masterURL string) string {
+	type candidate struct {
+		bw  int
+		url string
+	}
+	var candidates []candidate
+	lines := strings.Split(strings.ReplaceAll(masterText, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#EXT-X-STREAM-INF") {
+			continue
+		}
+		bw := 0
+		if m := regexp.MustCompile(`BANDWIDTH=(\d+)`).FindStringSubmatch(line); len(m) > 1 {
+			bw, _ = strconv.Atoi(m[1])
+		}
+		for j := i + 1; j < len(lines); j++ {
+			next := strings.TrimSpace(lines[j])
+			if next == "" || strings.HasPrefix(next, "#") {
+				continue
+			}
+			candidates = append(candidates, candidate{bw: bw, url: joinZLURL(masterURL, next)})
+			break
+		}
+	}
+	if len(candidates) == 0 {
+		return masterURL
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].bw > candidates[j].bw })
+	return candidates[0].url
+}
+
+func (x *zlContext) rewriteZLQCloudM3U8(text, baseURL string, info zlQCloudPlayInfo) string {
+	if !strings.Contains(text, "#EXTM3U") {
+		return ""
+	}
+	uriRe := regexp.MustCompile(`URI="([^"]+)"`)
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			if strings.Contains(trimmed, "URI=") {
+				lines[i] = uriRe.ReplaceAllStringFunc(line, func(match string) string {
+					m := uriRe.FindStringSubmatch(match)
+					if len(m) < 2 {
+						return match
+					}
+					u := joinZLURL(baseURL, m[1])
+					if strings.Contains(trimmed, "#EXT-X-KEY") {
+						u = appendZLToken(u, info.DRMToken)
+						if key := x.qcloudKeyDataURL(u, baseURL, info); key != "" {
+							u = key
+						}
+					}
+					return `URI="` + u + `"`
+				})
+			}
+			continue
+		}
+		lines[i] = joinZLURL(baseURL, trimmed)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (x *zlContext) qcloudKeyDataURL(keyURL, referer string, info zlQCloudPlayInfo) string {
+	key, iv, ok := overlayMaterial(info.OverlayKey, info.OverlayIV)
+	if !ok {
+		return ""
+	}
+	h := map[string]string{"Referer": referer, "User-Agent": x.headers["User-Agent"]}
+	raw, err := x.c.GetBytes(keyURL, h)
+	if err != nil || len(raw) == 0 || len(raw)%aes.BlockSize != 0 {
+		return ""
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return ""
+	}
+	plain := make([]byte, len(raw))
+	cipher.NewCBCDecrypter(block, iv).CryptBlocks(plain, raw)
+	if len(plain) != aes.BlockSize {
+		if unpadded := maybePKCS7Key(plain); len(unpadded) == aes.BlockSize {
+			plain = unpadded
+		} else {
+			return ""
+		}
+	}
+	return "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(plain)
+}
+
+func overlayMaterial(keyHex, ivHex string) ([]byte, []byte, bool) {
+	key, err := hex.DecodeString(strings.TrimSpace(keyHex))
+	if err != nil {
+		return nil, nil, false
+	}
+	iv, err := hex.DecodeString(strings.TrimSpace(ivHex))
+	if err != nil || len(iv) != aes.BlockSize {
+		return nil, nil, false
+	}
+	switch len(key) {
+	case 16, 24, 32:
+		return key, iv, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func maybePKCS7Key(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	padding := int(data[len(data)-1])
+	if padding == 0 || padding > aes.BlockSize || padding > len(data) {
+		return nil
+	}
+	for i := len(data) - padding; i < len(data); i++ {
+		if data[i] != byte(padding) {
+			return nil
+		}
+	}
+	return data[:len(data)-padding]
+}
+
+func appendZLToken(rawURL, token string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	token = strings.TrimSpace(token)
+	if rawURL == "" || token == "" || strings.Contains(rawURL, "token=") {
+		return rawURL
+	}
+	sep := "?"
+	if strings.Contains(rawURL, "?") {
+		sep = "&"
+	}
+	return rawURL + sep + "token=" + url.QueryEscape(token)
+}
+
+func joinZLURL(base, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") || strings.HasPrefix(ref, "data:") {
+		return ref
+	}
+	if strings.HasPrefix(ref, "//") {
+		return "https:" + ref
+	}
+	b, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return b.ResolveReference(r).String()
+}
+
+func zlM3U8DataURL(text string) string {
+	return "data:application/vnd.apple.mpegurl;base64," + base64.StdEncoding.EncodeToString([]byte(text))
 }
 
 func collectFiles(payloads []any, parentTitle string) []zlFile {
@@ -665,6 +930,19 @@ func collectFiles(payloads []any, parentTitle string) []zlFile {
 
 func fileEntry(f zlFile, index int) *extractor.MediaInfo {
 	return &extractor.MediaInfo{Site: "zlketang", Title: cleanTitle(firstNonEmpty(f.Title, fmt.Sprintf("[%02d]--资料", index))), Streams: map[string]extractor.Stream{"default": {Quality: "source", URLs: []string{f.URL}, Format: f.Format, Headers: map[string]string{"Referer": refererURL}}}}
+}
+
+func uniqueZLFiles(files []zlFile) []zlFile {
+	seen := map[string]bool{}
+	out := make([]zlFile, 0, len(files))
+	for _, f := range files {
+		if f.URL == "" || seen[f.URL] {
+			continue
+		}
+		seen[f.URL] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 func firstMediaURL(m map[string]any) string {

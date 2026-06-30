@@ -36,7 +36,7 @@ const (
 
 var (
 	patterns     = []string{`(?:[\w-]+\.)?youzan\.com/`}
-	mediaRe      = regexp.MustCompile(`https?://[^"'\s<>]+(?:\.m3u8|\.mp4|\.mp3|\.m4a|\.aac|\.wav)[^"'\s<>]*`)
+	mediaRe      = regexp.MustCompile(`(?i)https?://[^"'\s<>]+(?:\.m3u8|\.mp4|\.mp3|\.m4a|\.aac|\.wav)[^"'\s<>]*`)
 	htmlTagRe    = regexp.MustCompile(`<[^>]+>`)
 	titleCleanRe = regexp.MustCompile(`[\\/:*?"<>|\r\n\t]+`)
 	whiteRe      = regexp.MustCompile(`\s+`)
@@ -306,7 +306,7 @@ func (x *yzContext) hRef(ref string) map[string]string {
 func (x *yzContext) hRefUA(ref, ua string) map[string]string {
 	h := x.hRef(ref)
 	if ua != "" {
-		h["User-ToolSearch"] = ua
+		h["User-Agent"] = ua
 	}
 	return h
 }
@@ -840,7 +840,7 @@ func (x *yzContext) lessonToInfo(l yzLesson, title string) (*extractor.MediaInfo
 			Streams: map[string]extractor.Stream{"default": {
 				Quality: "source", URLs: []string{m.URL},
 				Format: pickFormat(m.URL, m.ContentType),
-				Size: m.Size, Headers: hdrs,
+				Size:   m.Size, Headers: hdrs,
 			}},
 		})
 	}
@@ -1081,16 +1081,29 @@ func resolveTitle(data map[string]any) string {
 func extractMediaURLs(v any) []string {
 	seen := map[string]bool{}
 	var out []string
+	appendURL := func(raw string) {
+		raw = strings.TrimSpace(strings.ReplaceAll(raw, `\/`, `/`))
+		if raw == "" || !strings.HasPrefix(strings.ToLower(raw), "http") {
+			return
+		}
+		low := strings.ToLower(raw)
+		if !mediaRe.MatchString(raw) && !hasYouzanMediaHint(low) {
+			return
+		}
+		if !seen[raw] {
+			seen[raw] = true
+			out = append(out, raw)
+		}
+	}
 	var walk func(any)
 	walk = func(x any) {
 		switch t := x.(type) {
 		case string:
-			for _, m := range mediaRe.FindAllString(strings.ReplaceAll(t, `\/`, `/`), -1) {
-				if !seen[m] {
-					seen[m] = true
-					out = append(out, m)
-				}
+			text := strings.ReplaceAll(t, `\/`, `/`)
+			for _, m := range mediaRe.FindAllString(text, -1) {
+				appendURL(m)
 			}
+			appendURL(text)
 		case []any:
 			for _, it := range t {
 				walk(it)
@@ -1109,6 +1122,18 @@ func extractMediaURLs(v any) []string {
 	}
 	walk(v)
 	return out
+}
+
+func hasYouzanMediaHint(low string) bool {
+	for _, marker := range []string{
+		".m3u8", ".mp4", ".mp3", ".m4a", ".aac", ".wav",
+		"format=m3u8", "format=mp4", "type=m3u8", "type=mp4",
+	} {
+		if strings.Contains(low, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func iterValues(v any) []any {
@@ -1230,9 +1255,9 @@ func cleanTitle(s string) string { return titleCleanRe.ReplaceAllString(strings.
 func pickFormat(u, ct string) string {
 	low := strings.ToLower(u + " " + ct)
 	switch {
-	case strings.Contains(low, ".m3u8"):
+	case strings.Contains(low, ".m3u8") || strings.Contains(low, "format=m3u8") || strings.Contains(low, "type=m3u8"):
 		return "m3u8"
-	case strings.Contains(low, ".mp3"):
+	case strings.Contains(low, ".mp3") || strings.Contains(low, "audio/mpeg"):
 		return "mp3"
 	case strings.Contains(low, ".m4a"):
 		return "m4a"

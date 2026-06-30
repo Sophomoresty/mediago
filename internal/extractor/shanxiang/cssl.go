@@ -102,17 +102,30 @@ func resolveShanxiangReplayAPI(c *util.Client, referer, accessID, roomID, record
 		return nil, fmt.Errorf("replay play returned no video streams")
 	}
 	sort.SliceStable(videos, func(i, j int) bool { return videos[i].Definition > videos[j].Definition })
+	best, ok := firstPlayableShanxiangCsslStream(videos)
+	if !ok {
+		return nil, fmt.Errorf("replay play returned no playable video URL")
+	}
 
 	audios := parseShanxiangCsslStreams(firstNonNil(data["audio"], data["audios"], nestedField(data, "vod_info", "audio")))
 	out := &shared.CssLcloudPlayInfo{
 		SessionID: token,
-		VideoURL:  videos[0].URL,
+		VideoURL:  best.URL,
 		VideoList: videos,
 	}
 	if len(audios) > 0 {
 		out.AudioURL = audios[0].URL
 	}
 	return out, nil
+}
+
+func firstPlayableShanxiangCsslStream(videos []shared.CssLcloudStreamInfo) (shared.CssLcloudStreamInfo, bool) {
+	for _, video := range videos {
+		if strings.TrimSpace(video.URL) != "" {
+			return video, true
+		}
+	}
+	return shared.CssLcloudStreamInfo{}, false
 }
 
 func shanxiangCsslHeaders(referer, token string) map[string]string {

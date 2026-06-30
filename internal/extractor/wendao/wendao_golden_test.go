@@ -216,3 +216,40 @@ func TestExtractMock(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractOnlyPDFSkipsMediaLessons(t *testing.T) {
+	fixtures := loadFixtures(t)
+	installMockTransport(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Host == "wap.wendao101.com" && r.Method == http.MethodPost && r.URL.Path == "/wap/home_page/course/purchased":
+			writeFixture(t, w, fixtures, "course_list")
+		case r.Host == "wap.wendao101.com" && r.Method == http.MethodPost && r.URL.Path == "/wap/course/detail":
+			writeFixture(t, w, fixtures, "detail")
+		default:
+			t.Errorf("unexpected request: %s %s%s", r.Method, r.Host, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+
+	jar := newJar()
+	setCookies(t, jar, "https://pc.wendao101.com/", &http.Cookie{Name: "token", Value: "wendao-token"}, &http.Cookie{Name: "openId", Value: "wendao-openid"})
+
+	ext, err := extractor.Match("https://pc.wendao101.com/course/detail/1001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := ext.Extract("https://pc.wendao101.com/course/detail/1001", &extractor.ExtractOpts{Cookies: jar, Quality: "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Entries) != 1 {
+		t.Fatalf("entries=%d, want only one courseware entry", len(info.Entries))
+	}
+	got := firstPlayableURL(info)
+	if !strings.Contains(got, "cdn.example.com/wendao.pdf") {
+		t.Fatalf("playable URL %q does not contain courseware PDF", got)
+	}
+	if strings.Contains(got, "wendao.mp4") || strings.Contains(got, "wendao.mp3") {
+		t.Fatalf("only-pdf returned media URL: %q", got)
+	}
+}

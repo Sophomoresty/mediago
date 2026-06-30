@@ -153,3 +153,33 @@ func goldenAssertMedia(t *testing.T, site string, got *extractor.MediaInfo) {
 		}
 	}
 }
+
+func TestExtractMockPolyvManifestIsInlineM3U8(t *testing.T) {
+	routes := goldenLoadRoutes(t)
+	goldenInstallTransport(t, routes)
+	jar := goldenNewJar(t)
+	got, err := (&Minshi{}).Extract("https://vip.minshiedu.com/course/courseHome?courseId=1001", &extractor.ExtractOpts{Cookies: jar})
+	if err != nil {
+		t.Fatalf("Extract returned error: %v", err)
+	}
+	if len(got.Entries) == 0 {
+		t.Fatalf("expected course entries")
+	}
+	stream, ok := got.Entries[0].Streams["best"]
+	if !ok {
+		t.Fatalf("best stream missing: %#v", got.Entries[0].Streams)
+	}
+	if stream.Format != "m3u8" || !stream.NeedMerge {
+		t.Fatalf("stream format/merge = %q/%v, want m3u8/true", stream.Format, stream.NeedMerge)
+	}
+	if len(stream.URLs) != 1 || !strings.HasPrefix(stream.URLs[0], "data:application/vnd.apple.mpegurl;base64,") {
+		t.Fatalf("stream URL not inline m3u8 data URL: %#v", stream.URLs)
+	}
+	if got.Entries[0].Extra["source_type"] != "m3u8_text" {
+		t.Fatalf("source_type = %#v, want m3u8_text", got.Entries[0].Extra["source_type"])
+	}
+	text, _ := got.Entries[0].Extra["m3u8_text"].(string)
+	if !strings.Contains(text, "#EXTM3U") || !strings.Contains(text, "https://media.example.com/minshi/segment.ts") {
+		t.Fatalf("m3u8_text not captured/absolutized: %q", text)
+	}
+}

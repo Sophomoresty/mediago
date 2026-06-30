@@ -63,11 +63,15 @@ func (c *Chaoxing) Extract(rawURL string, opts *extractor.ExtractOpts) (*extract
 			return entry, nil
 		}
 	}
-	if liveID := extractZhiboLiveID(rawURL); liveID != "" {
-		if entry, err := ctx.resolveZhiboLiveEntry(liveID, extractChaoxingUUID(rawURL)); err == nil && entry != nil {
-			return entry, nil
-		} else if err != nil {
-			return nil, err
+	if isZhiboChaoxingURL(rawURL) {
+		liveID := extractZhiboLiveID(rawURL)
+		uuid := extractZhiboReviewUUID(rawURL)
+		if liveID != "" || uuid != "" {
+			if entry, err := ctx.resolveZhiboLiveEntry(liveID, uuid); err == nil && entry != nil {
+				return entry, nil
+			} else if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -115,15 +119,60 @@ func extractChaoxingUUID(raw string) string {
 	return ""
 }
 
-func extractZhiboLiveID(raw string) string {
+func extractZhiboReviewUUID(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || !strings.Contains(strings.ToLower(u.Host), "zhibo.chaoxing.com") {
+	if err != nil || !isZhiboChaoxingHost(u.Host) {
 		return ""
 	}
-	if path := strings.Trim(strings.TrimSpace(u.Path), "/"); regexp.MustCompile(`^\d+$`).MatchString(path) {
-		return path
+	if v := strings.TrimSpace(u.Query().Get("uuid")); v != "" {
+		return v
 	}
 	return ""
+}
+
+func extractZhiboLiveID(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || !isZhiboChaoxingHost(u.Host) {
+		return ""
+	}
+	for _, key := range []string{"liveid", "liveId", "id", "cid"} {
+		for qk, vals := range u.Query() {
+			if !strings.EqualFold(qk, key) || len(vals) == 0 {
+				continue
+			}
+			if v := strings.TrimSpace(vals[0]); isDecimalID(v) {
+				return v
+			}
+		}
+	}
+	for _, seg := range strings.Split(strings.Trim(strings.TrimSpace(u.Path), "/"), "/") {
+		if isDecimalID(seg) {
+			return seg
+		}
+	}
+	return ""
+}
+
+func isZhiboChaoxingURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && isZhiboChaoxingHost(u.Host)
+}
+
+func isZhiboChaoxingHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "zhibo.chaoxing.com" || strings.HasSuffix(host, ".zhibo.chaoxing.com")
+}
+
+func isDecimalID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 const (
@@ -185,8 +234,46 @@ func newChaoxingContext(c *util.Client, jar http.CookieJar, rawURL string) *chao
 	if u, err := url.Parse(rawURL); err == nil && u.Scheme != "" && u.Host != "" {
 		ctx.applyURLContext(u.String())
 	}
+	if cookie := chaoxingCookieHeader(jar); cookie != "" {
+		ctx.headers["Cookie"] = cookie
+	}
 	ctx.extractAccessFromURL(rawURL)
 	return ctx
+}
+
+func chaoxingCookieHeader(jar http.CookieJar) string {
+	if jar == nil {
+		return ""
+	}
+	hosts := []string{
+		"mooc1.chaoxing.com",
+		"mooc2-ans.chaoxing.com",
+		"i.mooc.chaoxing.com",
+		"k.chaoxing.com",
+		"appswh.chaoxing.com",
+		"cs-ans.chaoxing.com",
+		"zhibo.chaoxing.com",
+		"www.xueyinonline.com",
+		"mooc1.xueyinonline.com",
+	}
+	seen := map[string]bool{}
+	var parts []string
+	for _, host := range hosts {
+		u := &url.URL{Scheme: "https", Host: host, Path: "/"}
+		for _, c := range jar.Cookies(u) {
+			name := strings.TrimSpace(c.Name)
+			if name == "" {
+				continue
+			}
+			part := name + "=" + c.Value
+			if seen[part] {
+				continue
+			}
+			seen[part] = true
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (x *chaoxingContext) abs(path string) string {
@@ -267,6 +354,15 @@ func (x *chaoxingContext) fetchZhiboLiveTitle(liveID, uuid string) string {
 	body, err := x.getString(base + "/" + url.PathEscape(liveID))
 	if err != nil || strings.TrimSpace(body) == "" {
 		return ""
+	}
+	for _, tag := range regexp.MustCompile(`(?is)<meta\b[^>]*>`).FindAllString(body, -1) {
+		attrs := htmlAttrMap(tag)
+		if !strings.EqualFold(directMapString(attrs, "itemprop"), "name") {
+			continue
+		}
+		if title := cleanText(directMapString(attrs, "content")); title != "" {
+			return util.SanitizeFilename(title)
+		}
 	}
 	if m := regexp.MustCompile(`(?is)<meta\s*itemprop="name"\s*content="([^"]*?)"\s*/?>`).FindStringSubmatch(body); len(m) > 1 {
 		if title := cleanText(m[1]); title != "" {

@@ -454,7 +454,10 @@ func legacyCssLcloudResolvePlayInfo(c *util.Client, p shared.CssLcloudPayload) (
 		"Referer":    csslOrigin + "/",
 		"X-HD-Token": token,
 	}
-	u, _ := url.Parse(csslPlayURL)
+	u, err := url.Parse(csslPlayURL)
+	if err != nil {
+		return nil, fmt.Errorf("csslcloud legacy play url parse: %w", err)
+	}
 	q := u.Query()
 	q.Set("tpl", "20")
 	q.Set("terminal", "3")

@@ -432,7 +432,9 @@ func listUnits(c *util.Client, sid, courseID, categoryID string, auth classinAut
 	var holder struct {
 		UUID string `json:"uuid"`
 	}
-	_ = json.Unmarshal(env.Data, &holder)
+	if err := json.Unmarshal(env.Data, &holder); err != nil {
+		holder.UUID = ""
+	}
 	return units, holder.UUID
 }
 

@@ -1,6 +1,14 @@
 package zhihuishu
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Sophomoresty/mediago/internal/util"
+)
 
 func TestExtractCourseHomeID(t *testing.T) {
 	tests := map[string]string{
@@ -56,5 +64,95 @@ func TestParseCourseHomeVideos(t *testing.T) {
 		if videos[i] != want[i] {
 			t.Fatalf("videos[%d] = %#v, want %#v", i, videos[i], want[i])
 		}
+	}
+}
+
+func TestParseKgCourseTreeExtractsHashResources(t *testing.T) {
+	body := `{
+	  "data": [{
+	    "name": "chapter",
+	    "lessons": [{
+	      "name": "hash lesson",
+	      "idHash": "hash-1",
+	      "idStr": "str-1",
+	      "smallLessons": [{
+	        "name": "small hash",
+	        "idHash": "hash-2",
+	        "idStr": "str-2"
+	      }]
+	    }]
+	  }]
+	}`
+	videos, hashes := parseKgCourseTree(body)
+	if len(videos) != 0 {
+		t.Fatalf("videos len = %d, want 0: %#v", len(videos), videos)
+	}
+	want := []courseHomeHash{
+		{Title: "[1.1]--hash lesson", IDStr: "str-1", IDHash: "hash-1"},
+		{Title: "[1.1.1]--small hash", IDStr: "str-2", IDHash: "hash-2"},
+	}
+	if len(hashes) != len(want) {
+		t.Fatalf("hashes len = %d, want %d: %#v", len(hashes), len(want), hashes)
+	}
+	for i := range want {
+		if hashes[i] != want[i] {
+			t.Fatalf("hashes[%d] = %#v, want %#v", i, hashes[i], want[i])
+		}
+	}
+}
+
+func TestCollectHashFileEntriesResolvesResources(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		switch {
+		case strings.Contains(r.URL.Path, "/gateway/t/node/queryNodeDescription"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"nodeRespResourceVos": []map[string]any{
+						{
+							"resourcesSuffix": "mp4",
+							"resourcesFileId": "9001",
+							"resourcesUrl":    "https://fallback.example.com/video.mp4",
+							"resourcesName":   "视频.mp4",
+						},
+						{
+							"resourcesSuffix": "pdf",
+							"resourcesUrl":    "https://cdn.example.com/courseware.pdf",
+							"resourcesName":   "课件.pdf",
+						},
+					},
+				},
+			})
+		case strings.Contains(r.URL.Path, "/video/initVideo"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": map[string]any{
+					"uuid":  "uuid-1",
+					"lines": []map[string]any{{"lineID": 2}},
+				},
+			})
+		case strings.Contains(r.URL.Path, "/video/changeVideoLine"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": "https://media.example.com/hash-video-hd.mp4",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	httpSrv := httptest.NewServer(handler)
+	defer httpSrv.Close()
+	httpsSrv := httptest.NewTLSServer(handler)
+	defer httpsSrv.Close()
+	installMockTransport(t, httpSrv.URL, httpsSrv.URL)
+
+	ctx := &courseContext{hashItems: []courseHomeHash{{Title: "[1.1]--hash", IDStr: "str-1", IDHash: "hash-1"}}}
+	entries := collectHashFileEntries(util.NewClient(), ctx, zhihuishuHeaders("https://coursehome.zhihuishu.com/"), zhsMode{hd: true})
+	if len(entries) != 2 {
+		t.Fatalf("entries len = %d, want 2: %#v", len(entries), entries)
+	}
+	if got := goldenFirstPlayableURL(entries[0]); got != "https://media.example.com/hash-video-hd.mp4" {
+		t.Fatalf("hash video URL = %q, want resolved HD URL", got)
+	}
+	if got := goldenFirstPlayableURL(entries[1]); got != "https://cdn.example.com/courseware.pdf" {
+		t.Fatalf("hash file URL = %q, want courseware URL", got)
 	}
 }

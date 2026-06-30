@@ -49,13 +49,14 @@ var (
 // buildFilesURL ports Chaoxing_Course._build_files_url. It needs cid, clazzid,
 // enc and openc; returns "" otherwise so the caller fails closed.
 func (x *chaoxingContext) buildFilesURL(openc, dataID string) string {
-	if x.courseID == "" || x.clazzID == "" || x.enc == "" || openc == "" {
+	enc := firstNonEmpty(x.enc, x.oldEnc)
+	if x.courseID == "" || x.clazzID == "" || enc == "" || openc == "" {
 		return ""
 	}
 	values := url.Values{}
 	values.Set("courseId", x.courseID)
 	values.Set("classId", x.clazzID)
-	values.Set("enc", x.enc)
+	values.Set("enc", enc)
 	if x.cpi != "" {
 		values.Set("cpi", x.cpi)
 	}

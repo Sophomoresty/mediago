@@ -53,7 +53,7 @@ func extractSchoolCID(u string) string {
 }
 
 // extractSchool implements the Zhihuishu_School flow.
-func extractSchool(rawURL string, opts *extractor.ExtractOpts) (*extractor.MediaInfo, error) {
+func extractSchool(rawURL string, opts *extractor.ExtractOpts, mode zhsMode) (*extractor.MediaInfo, error) {
 	cid := extractSchoolCID(rawURL)
 	if cid == "" {
 		return nil, fmt.Errorf("cannot parse zhihuishu school URL: %s", rawURL)
@@ -85,7 +85,7 @@ func extractSchool(rawURL string, opts *extractor.ExtractOpts) (*extractor.Media
 	}
 
 	// Walk the tree and collect video/file entries
-	entries := walkSchoolTree(c, cid, treeResp.Rt, h, "")
+	entries := walkSchoolTree(c, cid, treeResp.Rt, h, "", mode)
 
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("zhihuishu school %s returned no downloadable resources", cid)
@@ -110,7 +110,7 @@ type schoolTreeNode struct {
 	ChildList []schoolTreeNode `json:"childList"`
 }
 
-func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[string]string, prefix string) []*extractor.MediaInfo {
+func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[string]string, prefix string, mode zhsMode) []*extractor.MediaInfo {
 	var out []*extractor.MediaInfo
 	videoIdx := 1
 	fileIdx := 1
@@ -123,6 +123,9 @@ func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[st
 		// Leaf node with id and dataType
 		if nodeID != "" && nodeID != "0" && dt > 0 {
 			if dt == 3 {
+				if mode.onlyFiles {
+					continue
+				}
 				// Video type
 				idx := fmt.Sprintf("%d", videoIdx)
 				if prefix != "" {
@@ -131,7 +134,7 @@ func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[st
 				videoName := fmt.Sprintf("[%s]--%s", idx, name)
 				videoIdx++
 
-				videoURL := getSchoolVideoURL(c, cid, nodeID, h)
+				videoURL := getSchoolVideoURL(c, cid, nodeID, h, mode)
 				if videoURL != "" {
 					out = append(out, &extractor.MediaInfo{
 						Site:  "zhihuishu",
@@ -177,7 +180,7 @@ func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[st
 
 		// Non-leaf node: recurse into children
 		if len(node.ChildList) > 0 {
-			sub := walkSchoolTree(c, cid, node.ChildList, h, prefix)
+			sub := walkSchoolTree(c, cid, node.ChildList, h, prefix, mode)
 			out = append(out, sub...)
 		}
 	}
@@ -186,12 +189,12 @@ func walkSchoolTree(c *util.Client, cid string, nodes []schoolTreeNode, h map[st
 
 // getSchoolVideoURL implements Zhihuishu_School._get_video_url.
 // stuViewFile -> dataId -> initVideo + changeVideoLine
-func getSchoolVideoURL(c *util.Client, cid, fileID string, h map[string]string) string {
+func getSchoolVideoURL(c *util.Client, cid, fileID string, h map[string]string, mode zhsMode) string {
 	dataID := getSchoolVideoDataID(c, cid, fileID, h)
 	if dataID == "" {
 		return ""
 	}
-	url, err := getVideoURL(c, dataID, h)
+	url, err := getVideoURL(c, dataID, h, mode)
 	if err != nil {
 		return ""
 	}
