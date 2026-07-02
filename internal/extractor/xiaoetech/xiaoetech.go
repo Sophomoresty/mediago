@@ -63,6 +63,17 @@ const (
 	clockChapterURL   = "https://%s%s/punch_card/get_chapter_detail"
 	trainPCClockURL   = "https://%s%s/punch_card/get_work_clock_detail"
 	trainClockURL     = "https://%s%s/punch_card/get_punch_clock_theme_detail"
+
+	// Clock page URL patterns (user-facing input URLs for clock content).
+	// e.g. https://{app}.xet.citv.cn/p/t/v1/clock/e_clock/clock_h5/clockIndex?activity_id=ac_xxx
+	// e.g. https://{app}.h5.xet.citv.cn/p/t/v1/clock/e_clock/clock_h5/clockIntroduce?activity_id=ac_xxx
+	clockPagePath = "/clock/e_clock/clock_h5/clockIndex"
+	clockIntroPagePath = "/clock/e_clock/clock_h5/clockIntroduce"
+
+	// Training camp auth check endpoint (source: Xiaoetech_Base.__check_course_cookie).
+	// https://{app}{xet_domain}/xe.training.teas/wework/is_auth
+	trainingAuthURL = "https://%s%s/xe.training.teas/wework/is_auth"
+
 	pageSize          = 30
 )
 
@@ -235,6 +246,10 @@ func parseCtx(raw string) xetCtx {
 		}
 	}
 	if ctx.typ == "" && strings.Contains(strings.ToLower(u.Path), "/clock/") {
+		ctx.typ = "clock"
+	}
+	// Recognize clock_h5/clockIndex and clock_h5/clockIntroduce page URL patterns.
+	if ctx.typ == "clock" && (strings.Contains(u.Path, clockPagePath) || strings.Contains(u.Path, clockIntroPagePath)) {
 		ctx.typ = "clock"
 	}
 	q := u.Query()

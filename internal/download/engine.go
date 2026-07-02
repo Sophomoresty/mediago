@@ -29,14 +29,76 @@ type Opts struct {
 	Proxy             string
 	Context           context.Context
 	MergeOutputFormat string
+	LimitRate         string
+	Verbose           bool
+}
+
+// ParseRate parses a rate string like "1M", "500K", "2.5M" into bytes per second.
+func ParseRate(rate string) int64 {
+	if rate == "" {
+		return 0
+	}
+	rate = strings.TrimSpace(rate)
+	var multiplier int64 = 1
+	upper := strings.ToUpper(rate)
+	switch {
+	case strings.HasSuffix(upper, "M"):
+		multiplier = 1024 * 1024
+		rate = rate[:len(rate)-1]
+	case strings.HasSuffix(upper, "K"):
+		multiplier = 1024
+		rate = rate[:len(rate)-1]
+	case strings.HasSuffix(upper, "G"):
+		multiplier = 1024 * 1024 * 1024
+		rate = rate[:len(rate)-1]
+	}
+	val := 0.0
+	fmt.Sscanf(rate, "%f", &val)
+	if val <= 0 {
+		return 0
+	}
+	return int64(val * float64(multiplier))
+}
+
+// rateLimitedReader wraps a reader and limits read speed to bytesPerSec.
+type rateLimitedReader struct {
+	r            io.Reader
+	bytesPerSec int64
+	read         int64
+	start        time.Time
+}
+
+func newRateLimitedReader(r io.Reader, bytesPerSec int64) io.Reader {
+	if bytesPerSec <= 0 {
+		return r
+	}
+	return &rateLimitedReader{
+		r:            r,
+		bytesPerSec: bytesPerSec,
+		start:        time.Now(),
+	}
+}
+
+func (r *rateLimitedReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.read += int64(n)
+		elapsed := time.Since(r.start)
+		expectedDuration := time.Duration(float64(r.read) / float64(r.bytesPerSec) * float64(time.Second))
+		if sleepTime := expectedDuration - elapsed; sleepTime > 0 {
+			time.Sleep(sleepTime)
+		}
+	}
+	return n, err
 }
 
 type Engine struct {
-	opts   Opts
-	ffmpeg string
-	client *util.Client
-	http   *http.Client
-	ctx    context.Context
+	opts      Opts
+	ffmpeg    string
+	client    *util.Client
+	http      *http.Client
+	ctx       context.Context
+	limitRate int64
 }
 
 func New(opts Opts) *Engine {
@@ -61,12 +123,17 @@ func New(opts Opts) *Engine {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	limitRate := ParseRate(opts.LimitRate)
+	if opts.Verbose && limitRate > 0 {
+		fmt.Fprintf(os.Stderr, "[debug] Rate limit: %d bytes/sec\n", limitRate)
+	}
 	return &Engine{
-		opts:   opts,
-		ffmpeg: ffmpeg,
-		client: client,
-		http:   httpClient,
-		ctx:    ctx,
+		opts:      opts,
+		ffmpeg:    ffmpeg,
+		client:    client,
+		http:      httpClient,
+		ctx:       ctx,
+		limitRate: limitRate,
 	}
 }
 
@@ -209,6 +276,14 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 		return writeDataURL(url, outPath)
 	}
 
+	partPath := outPath + ".part"
+
+	// Check for existing .part file for resume
+	var resumeOffset int64
+	if fi, err := os.Stat(partPath); err == nil && fi.Size() > 0 {
+		resumeOffset = fi.Size()
+	}
+
 	req, err := http.NewRequestWithContext(e.ctx, "GET", url, nil)
 	if err != nil {
 		return err
@@ -217,6 +292,9 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	if resumeOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeOffset))
+	}
 
 	resp, err := e.http.Do(req)
 	if err != nil {
@@ -224,34 +302,60 @@ func (e *Engine) downloadSingle(url, outPath string, headers map[string]string, 
 	}
 	defer resp.Body.Close()
 
+	if e.opts.Verbose {
+		fmt.Fprintf(os.Stderr, "[debug] GET %s -> %d (Content-Length: %d)\n", url, resp.StatusCode, resp.ContentLength)
+	}
+
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, url)
 	}
 
-	if size <= 0 {
-		size = resp.ContentLength
+	// Handle resume: if server returns 200 (full response), truncate and restart
+	// If server returns 206 (partial), append to existing .part file
+	var f *os.File
+	if resumeOffset > 0 && resp.StatusCode == http.StatusPartialContent {
+		// Resume: open in append mode
+		f, err = os.OpenFile(partPath, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return err
+		}
+		if size <= 0 && resp.ContentLength > 0 {
+			size = resumeOffset + resp.ContentLength
+		}
+	} else {
+		// Full download: server returned 200 or no resume
+		resumeOffset = 0
+		f, err = os.Create(partPath)
+		if err != nil {
+			return err
+		}
+		if size <= 0 {
+			size = resp.ContentLength
+		}
 	}
 
-	partPath := outPath + ".part"
-	f, err := os.Create(partPath)
-	if err != nil {
-		return err
+	// Wrap body with rate limiter if configured
+	var body io.Reader = resp.Body
+	if e.limitRate > 0 {
+		body = newRateLimitedReader(body, e.limitRate)
 	}
 
 	var w io.Writer = f
 	if !e.opts.NoProgress {
 		bar := progressbar.DefaultBytes(size, filepath.Base(outPath))
+		if resumeOffset > 0 {
+			bar.Add64(resumeOffset)
+		}
 		w = io.MultiWriter(f, bar)
 	}
-	_, copyErr := io.Copy(w, resp.Body)
+	_, copyErr := io.Copy(w, body)
 	closeErr := f.Close()
 
 	if copyErr != nil {
-		os.Remove(partPath)
+		// Keep .part file for future resume
 		return copyErr
 	}
 	if closeErr != nil {
-		os.Remove(partPath)
 		return closeErr
 	}
 
@@ -405,6 +509,10 @@ func (e *Engine) downloadSegOnce(ctx context.Context, url, path string, headers 
 	}
 	defer resp.Body.Close()
 
+	if e.opts.Verbose {
+		fmt.Fprintf(os.Stderr, "[debug] GET %s -> %d (Content-Length: %d)\n", url, resp.StatusCode, resp.ContentLength)
+	}
+
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("segment HTTP %d: %s", resp.StatusCode, url)
 	}
@@ -415,7 +523,12 @@ func (e *Engine) downloadSegOnce(ctx context.Context, url, path string, headers 
 		return err
 	}
 
-	_, copyErr := io.Copy(f, resp.Body)
+	var body io.Reader = resp.Body
+	if e.limitRate > 0 {
+		body = newRateLimitedReader(body, e.limitRate)
+	}
+
+	_, copyErr := io.Copy(f, body)
 	closeErr := f.Close()
 	if copyErr != nil {
 		os.Remove(partPath)

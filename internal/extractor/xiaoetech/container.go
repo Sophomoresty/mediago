@@ -12,6 +12,17 @@ import (
 	"github.com/Sophomoresty/mediago/internal/util"
 )
 
+// checkTrainingAuth validates training camp cookie via the xe.training.teas
+// auth endpoint (source: Xiaoetech_Base.__check_course_cookie). This is a
+// best-effort check; failure is non-fatal.
+func checkTrainingAuth(c *util.Client, jar http.CookieJar, ctx xetCtx) {
+	if ctx.appID == "" {
+		return
+	}
+	api := fmt.Sprintf(trainingAuthURL, ctx.appID, firstNonEmpty(ctx.xetDomain, xetDomainDefault))
+	_, _ = c.GetString(api, headers(jar, referer(ctx)))
+}
+
 func expandContainerItem(c *util.Client, jar http.CookieJar, ctx xetCtx, it xetItem) []xetItem {
 	typ := normType(firstNonEmpty(it.typ, ctx.typ))
 	if !isContainerType(typ) || it.id == "" {
@@ -90,6 +101,9 @@ func columnChildren(c *util.Client, jar http.CookieJar, ctx xetCtx, parent xetIt
 }
 
 func trainChildren(c *util.Client, jar http.CookieJar, ctx xetCtx, parent xetItem) []xetItem {
+	// Check training auth (source: Xiaoetech_Base.__check_course_cookie via
+	// xe.training.teas/wework/is_auth).
+	checkTrainingAuth(c, jar, ctx)
 	terms := postXETJSON(c, jar, ctx, termURL, pcTermURL, map[string]string{"term_id": parent.id})
 	out := []xetItem{}
 	for termIndex, term := range mapsFromAny(terms["data"]) {

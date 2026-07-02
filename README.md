@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Media downloader for Chinese internet. 92 sites, single binary, written in Go.</strong>
+  <strong>Media downloader for Chinese internet. 107 sites, single binary, written in Go.</strong>
 </p>
 
 <p align="center">
@@ -51,6 +51,43 @@ cd mediago && make build
 - **ffmpeg** — required for HLS/DASH streams and format merging
 
 ## Usage
+
+### Quick start
+
+```bash
+# Free content (no login needed): Douyin, Bilibili, CCTV, Smartedu
+mediago "https://www.douyin.com/video/7444926556498498867"
+mediago "https://www.bilibili.com/video/BV1GJ411x7h7"
+
+# Paid/premium content: export cookies then download
+mediago --cookies-from-browser chrome "https://www.icourse163.org/learn/kaopei-1472545161?tid=1474145441"
+
+# Download entire course/playlist
+mediago --yes-playlist --cookies cookies.txt "https://www.icourse163.org/learn/kaopei-1472545161?tid=1474145441"
+
+# Just peek (no download)
+mediago --simulate URL
+mediago -F URL          # list formats
+mediago -j URL          # dump JSON info
+```
+
+### Getting cookies
+
+Most paid platforms require login cookies. Two options:
+
+```bash
+# Option 1: auto-read from browser (easiest)
+mediago --cookies-from-browser chrome URL
+mediago --cookies-from-browser edge URL
+mediago --cookies-from-browser firefox URL
+
+# Option 2: export Netscape cookie file manually
+# Install "Get cookies.txt LOCALLY" browser extension, export for the target site,
+# then pass the file:
+mediago --cookies ~/cookies.txt URL
+```
+
+### Common examples
 
 ```bash
 # Download a video
@@ -129,7 +166,7 @@ The `-o` flag supports these variables:
 ## Supported platforms
 
 <details>
-<summary><strong>103 extractors across 92 sites</strong> (click to expand)</summary>
+<summary><strong>107 extractors</strong> (click to expand)</summary>
 
 Bilibili (video/cheese/gongfang/bangumi), Douyin, CCTV, Chaoxing, iCourse163 (mooc/app/youdao/textbook), Xuetang, Zhihuishu (course/live/school/smart), iMOOC, DingTalk, Feishu, Fenbi, Huatu, Gaodun, Jianshe99, Med66, Hqwx, Wangxiao, Wangxiao233, Dongao, Eoffcn, Kaoyanvip, Yikaobang, Xueersi, Yangcong, Yixiaoerguo, Speiyou, Gaotu, Koolearn, Cto51, Huke88, Magedu, Itbaizhan, Luffycity, Tmooc, Mashibing, Xiaoetech, Xiaoeapp, Youzan, Qlchat, Lizhiweike, Renrenjiang, Sanjieke, Duanshu, Lexueyun, Meeting, Classin, CCTalk, Baijiayunxiao, Keqq, Smartedu, Icourses, ICVE (ai/mooc/course/profession/v2/qun/weike/material), Cnmooc, Open163, Unipus, Ahu, Nmkjxy, Aishangke, Caixuetang, Chaoge, Ckjr, Enetedu, Gongxuanwang, Haiyangknow, Haozaixian, Houda, Houdu, Htknow, Jinbangshidai, Jingtongxue, Kaimingzhixue, Kuke, Ledu, Mddclass, Minshi, Orangevip, Plaso, Qihang, Shanxiang, Sier, Wallstreets, Wendao, Wowtiku, Xiwang, Xsteach, Xuelang, Yizhiknow, Youdao, Youyuan, Zhaozhao, Zhengbao, Zlketang
 
@@ -170,7 +207,7 @@ Pull requests welcome. Please ensure `go build ./...`, `go vet ./...`, and `go t
 
 Development is tracked via [GitHub Issues](https://github.com/Sophomoresty/mediago/issues). Key milestones:
 
-- **v0.2** — End-to-end testing for all 92 sites, release binaries, yt-dlp CLI parity (output templates, archive, format selection)
+- **v0.2** — End-to-end testing for all 107 sites, release binaries, yt-dlp CLI parity (output templates, archive, format selection)
 - **v0.3** — AliyunVoDEncryption full chain, whiteboard/canvas replay rendering, post-processing (subtitle embed, audio extract)
 - **v0.4** — New platforms (Douyin paid, Kuaishou, Xiaohongshu, WeChat Channels), config file support
 

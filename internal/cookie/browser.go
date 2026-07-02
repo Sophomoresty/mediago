@@ -31,6 +31,10 @@ func ReadBrowserCookies(browser string) ([]*http.Cookie, error) {
 		return nil, fmt.Errorf("unsupported browser: %s (use chrome/edge/firefox)", browser)
 	}
 
+	if browser == "firefox" {
+		return readFirefoxCookies()
+	}
+
 	if isWSL() {
 		return readCookiesWSL(browser)
 	}
@@ -49,6 +53,144 @@ func ReadBrowserCookies(browser string) ([]*http.Cookie, error) {
 func isWSL() bool {
 	data, _ := os.ReadFile("/proc/version")
 	return strings.Contains(strings.ToLower(string(data)), "microsoft")
+}
+
+// readFirefoxCookies reads cookies directly from Firefox's cookies.sqlite.
+// Firefox stores cookies unencrypted — no AES/DPAPI decryption needed.
+func readFirefoxCookies() ([]*http.Cookie, error) {
+	dbPath, err := findFirefoxCookieDB()
+	if err != nil {
+		return nil, err
+	}
+
+	// Use a Python script to read SQLite (avoids CGO dependency for go-sqlite3)
+	script := buildFirefoxExportScript(dbPath)
+
+	scriptPath := filepath.Join(os.TempDir(), "medigo_firefox_cookie_export.py")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		return nil, err
+	}
+	defer os.Remove(scriptPath)
+
+	// Try python3 first, then python
+	var out []byte
+	var lastErr error
+	for _, pyCmd := range pythonCandidates() {
+		cmd := exec.Command(pyCmd, scriptPath)
+		out, lastErr = cmd.Output()
+		if lastErr == nil {
+			break
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("failed to read Firefox cookies (Python required for sqlite3): %w", lastErr)
+	}
+
+	return parseCookieJSON(out)
+}
+
+func pythonCandidates() []string {
+	if isWSL() {
+		return []string{"python3", "python", "python.exe", "python3.exe"}
+	}
+	if runtime.GOOS == "windows" {
+		return []string{"python", "python3"}
+	}
+	return []string{"python3", "python"}
+}
+
+func findFirefoxCookieDB() (string, error) {
+	var profileDirs []string
+
+	if isWSL() {
+		// WSL: check Windows-side Firefox profile
+		user := sanitizeUsername(os.Getenv("USER"))
+		if user == "" {
+			user = "default"
+		}
+		winProfile := fmt.Sprintf("/mnt/c/Users/%s/AppData/Roaming/Mozilla/Firefox/Profiles", user)
+		profileDirs = append(profileDirs, winProfile)
+		// Also check Linux-side
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			profileDirs = append(profileDirs, filepath.Join(home, ".mozilla", "firefox"))
+		}
+	} else {
+		switch runtime.GOOS {
+		case "linux":
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				profileDirs = append(profileDirs, filepath.Join(home, ".mozilla", "firefox"))
+			}
+		case "darwin":
+			home, _ := os.UserHomeDir()
+			if home != "" {
+				profileDirs = append(profileDirs, filepath.Join(home, "Library", "Application Support", "Firefox", "Profiles"))
+			}
+		case "windows":
+			appdata := os.Getenv("APPDATA")
+			if appdata != "" {
+				profileDirs = append(profileDirs, filepath.Join(appdata, "Mozilla", "Firefox", "Profiles"))
+			}
+		}
+	}
+
+	// Search for *.default-release profile first, then *.default
+	for _, dir := range profileDirs {
+		for _, pattern := range []string{"*.default-release", "*.default"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+			for _, m := range matches {
+				db := filepath.Join(m, "cookies.sqlite")
+				if _, err := os.Stat(db); err == nil {
+					return db, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("Firefox cookies.sqlite not found. Searched: %s", strings.Join(profileDirs, ", "))
+}
+
+func buildFirefoxExportScript(dbPath string) string {
+	// Escape backslashes for Windows paths embedded in Python
+	escaped := strings.ReplaceAll(dbPath, `\`, `\\`)
+	return fmt.Sprintf(`
+import json, sqlite3, os, sys, shutil, tempfile
+
+db_path = r"%s"
+if not os.path.exists(db_path):
+    print(json.dumps({"error": "Firefox cookies.sqlite not found at: " + db_path}))
+    sys.exit(0)
+
+# Copy to temp to avoid locking issues with running Firefox
+tmp = tempfile.mktemp(suffix='.sqlite')
+shutil.copy2(db_path, tmp)
+
+try:
+    conn = sqlite3.connect(tmp)
+    c = conn.cursor()
+    c.execute('SELECT name, value, host, path, expiry, isSecure FROM moz_cookies')
+    cookies = []
+    for name, value, host, path, expiry, secure in c.fetchall():
+        cookies.append({
+            "host": host,
+            "path": path,
+            "secure": 1 if secure else 0,
+            "expires": expiry if expiry else 0,
+            "name": name,
+            "value": value
+        })
+    conn.close()
+    os.remove(tmp)
+    print(json.dumps({"cookies": cookies, "count": len(cookies)}))
+except Exception as e:
+    try:
+        os.remove(tmp)
+    except:
+        pass
+    print(json.dumps({"error": str(e)}))
+    sys.exit(0)
+`, escaped)
 }
 
 // readCookiesWSL invokes Windows-side Python to decrypt Chrome/Edge cookies via DPAPI

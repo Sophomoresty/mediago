@@ -59,12 +59,12 @@ func (d *Douyin) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 		client.SetCookieJar(opts.Cookies)
 	}
 
-	ttwid := getTTWID(client)
 	if secUID := extractSecUID(rawURL); secUID != "" {
+		ttwid := mintTTWID(client)
 		return d.extractUser(rawURL, secUID, client, ttwid)
 	}
 
-	item, err := resolve(rawURL, client, ttwid)
+	item, err := resolveWithRetry(rawURL, client)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,8 @@ func (d *Douyin) Extract(rawURL string, opts *extractor.ExtractOpts) (*extractor
 	return mediaInfoFromItem(client, item, 0, "")
 }
 
-func getTTWID(client *util.Client) string {
+// mintTTWID registers a fresh anonymous ttwid token from bytedance.
+func mintTTWID(client *util.Client) string {
 	if client == nil {
 		client = util.NewClient()
 	}
@@ -94,6 +95,27 @@ func getTTWID(client *util.Client) string {
 		}
 	}
 	return ""
+}
+
+// resolveWithRetry resolves any Douyin URL to the item dict carrying play
+// addresses. On anti-bot shell (no _ROUTER_DATA), it rotates the ttwid and
+// retries once — matching the Python CLI's retry logic.
+func resolveWithRetry(rawURL string, client *util.Client) (map[string]interface{}, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		ttwid := mintTTWID(client)
+		item, err := resolve(rawURL, client, ttwid)
+		if err == nil {
+			return item, nil
+		}
+		// If the error indicates anti-bot shell, rotate ttwid and retry
+		if strings.Contains(err.Error(), "anti-bot") || strings.Contains(err.Error(), "no _ROUTER_DATA") {
+			lastErr = err
+			continue
+		}
+		return nil, err
+	}
+	return nil, lastErr
 }
 
 func resolve(rawURL string, client *util.Client, ttwid string) (map[string]interface{}, error) {
@@ -413,12 +435,18 @@ func buildStreams(client *util.Client, videoID string) map[string]extractor.Stre
 		}
 		seen[size] = true
 
+		// Download headers include Range to resume/stream properly
+		dlHeaders := map[string]string{"User-Agent": l.ua, "Range": "bytes=0-"}
+		if l.aid == "" {
+			dlHeaders["Referer"] = "https://www.douyin.com/"
+		}
+
 		streams[l.quality] = extractor.Stream{
 			Quality: l.quality,
 			URLs:    []string{playURL},
 			Format:  "mp4",
 			Size:    size,
-			Headers: headers,
+			Headers: dlHeaders,
 		}
 	}
 	return streams
@@ -490,7 +518,28 @@ func videoIDFromItem(item map[string]interface{}) string {
 	if playAddr == nil {
 		return ""
 	}
-	return stringValue(playAddr["uri"])
+	uri := stringValue(playAddr["uri"])
+	if !isVideoToken(uri) {
+		return ""
+	}
+	return uri
+}
+
+// isVideoToken validates that uri is a genuine video token (like "v0300fg10000...")
+// and not a URL or media path. Image/music posts put absolute URLs or "tos" paths
+// in the uri field; those are not usable with the play endpoint.
+func isVideoToken(uri string) bool {
+	if uri == "" {
+		return false
+	}
+	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") ||
+		strings.HasPrefix(uri, "tos") || strings.HasPrefix(uri, "//") {
+		return false
+	}
+	if strings.Contains(uri, "/") {
+		return false
+	}
+	return true
 }
 
 func authorName(item map[string]interface{}) string {

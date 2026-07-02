@@ -1,3 +1,4 @@
+// TODO: wire into CLI via --config flag
 package config
 
 import (

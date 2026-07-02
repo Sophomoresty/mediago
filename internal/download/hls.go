@@ -66,23 +66,50 @@ func (e *Engine) downloadHLS(filename string, stream extractor.Stream) (string, 
 		}
 	}
 
-	if e.ffmpeg != "" {
-		return outPath, e.hlsViaFFmpeg(m3u8URL, outPath, stream.Headers)
-	}
-
 	segments, err := e.parseM3U8Segments(m3u8URL, stream.Headers)
 	if err != nil {
+		if e.ffmpeg != "" {
+			return outPath, e.hlsViaFFmpeg(m3u8URL, outPath, stream.Headers)
+		}
 		return "", err
 	}
+
+	if keyURL, ok := stream.Extra["hls_key_url"].(string); ok && keyURL != "" {
+		key, err := e.fetchHLSKeyFromURL(keyURL, stream.Headers)
+		if err == nil && len(key) == 16 {
+			for i := range segments {
+				segments[i].Key = key
+				if len(segments[i].IV) == 0 {
+					segments[i].IV = mediaSequenceIV(i)
+				}
+			}
+		}
+	} else if keyB64, ok := stream.Extra["hls_key_b64"].(string); ok && keyB64 != "" {
+		if key, err := base64.StdEncoding.DecodeString(keyB64); err == nil && len(key) == 16 {
+			for i := range segments {
+				segments[i].Key = key
+				if len(segments[i].IV) == 0 {
+					segments[i].IV = mediaSequenceIV(i)
+				}
+			}
+		}
+	}
+
 	tsPath := outPath + ".ts"
 	if hasEncryptedHLSSegments(segments) {
 		if err := e.downloadHLSSegments(segments, tsPath, stream.Headers); err != nil {
 			return "", err
 		}
-		if err := os.Rename(tsPath, outPath); err != nil {
-			return "", err
+		if err := e.remuxTSToMP4(tsPath, outPath); err != nil {
+			os.Rename(tsPath, outPath)
+		} else {
+			os.Remove(tsPath)
 		}
 		return outPath, nil
+	}
+
+	if e.ffmpeg != "" {
+		return outPath, e.hlsViaFFmpeg(m3u8URL, outPath, stream.Headers)
 	}
 
 	urls := make([]string, 0, len(segments))
@@ -113,7 +140,7 @@ func (e *Engine) hlsViaFFmpeg(m3u8URL, outPath string, headers map[string]string
 	partPath := outPath + ".part"
 	_ = os.Remove(partPath)
 
-	args := []string{"-y", "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data"}
+	args := []string{"-y", "-protocol_whitelist", "file,http,https,tcp,tls,crypto,data,httpproxy"}
 	if proxy := ffmpegHTTPProxyURL(); proxy != "" {
 		args = append(args, "-http_proxy", proxy)
 	}
@@ -124,12 +151,25 @@ func (e *Engine) hlsViaFFmpeg(m3u8URL, outPath string, headers map[string]string
 		}
 		args = append(args, "-headers", strings.Join(hdr, "\r\n"))
 	}
-	args = append(args, "-i", m3u8URL, "-c", "copy", "-f", "mp4", partPath)
+	args = append(args, "-i", m3u8URL, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mp4", partPath)
 
 	cmd := exec.CommandContext(e.ctx, e.ffmpeg, args...)
 	if env := ffmpegEnv(); len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
+	if err := runFFmpeg(cmd); err != nil {
+		_ = os.Remove(partPath)
+		return err
+	}
+	return os.Rename(partPath, outPath)
+}
+
+func (e *Engine) remuxTSToMP4(tsPath, outPath string) error {
+	if e.ffmpeg == "" {
+		return fmt.Errorf("ffmpeg not found")
+	}
+	partPath := outPath + ".part"
+	cmd := exec.CommandContext(e.ctx, e.ffmpeg, "-y", "-i", tsPath, "-c", "copy", "-f", "mp4", partPath)
 	if err := runFFmpeg(cmd); err != nil {
 		_ = os.Remove(partPath)
 		return err
@@ -174,6 +214,7 @@ func (e *Engine) parseM3U8SegmentsAt(m3u8URL string, headers map[string]string, 
 		return nil, err
 	}
 	baseURL := m3u8URL
+	fullURL := m3u8URL
 	if strings.HasPrefix(strings.ToLower(m3u8URL), "data:") {
 		baseURL = ""
 	} else if idx := strings.LastIndex(m3u8URL, "/"); idx >= 0 {
@@ -203,7 +244,7 @@ func (e *Engine) parseM3U8SegmentsAt(m3u8URL string, headers map[string]string, 
 				continue
 			}
 			if strings.EqualFold(attrs["METHOD"], "AES-128") {
-				key, err := e.resolveM3U8Key(attrs["URI"], baseURL, headers)
+				key, err := e.resolveM3U8Key(attrs["URI"], fullURL, headers)
 				if err != nil {
 					return nil, err
 				}
@@ -327,6 +368,15 @@ func (e *Engine) resolveM3U8Key(rawURI, baseURL string, headers map[string]strin
 		return key, err
 	}
 	keyURL := resolveM3U8URI(rawURI, baseURL)
+	if strings.Contains(keyURL, "127.0.0.1") || strings.Contains(keyURL, "localhost") {
+		if u, err := url.Parse(baseURL); err == nil {
+			if token := u.Query().Get("token"); token != "" {
+				keyURL = token
+			} else {
+				return nil, nil
+			}
+		}
+	}
 	if key, ok, err := decodeInlineHexKey(keyURL); ok || err != nil {
 		return key, err
 	}
@@ -441,6 +491,27 @@ func hasEncryptedHLSSegments(segments []hlsSegment) bool {
 		}
 	}
 	return false
+}
+
+// fetchHLSKeyFromURL fetches a 16-byte AES-128 key from a remote URL.
+func (e *Engine) fetchHLSKeyFromURL(keyURL string, headers map[string]string) ([]byte, error) {
+	req, err := http.NewRequest("GET", keyURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", util.RandomUA())
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := e.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("HLS key fetch HTTP %d: %s", resp.StatusCode, keyURL)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func (e *Engine) downloadHLSSegments(segments []hlsSegment, outPath string, headers map[string]string) error {

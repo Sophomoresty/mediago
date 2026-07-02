@@ -94,7 +94,7 @@ func extractKaoyan(c *util.Client, ky kaoyanURLInfo, csrf ...string) (*extractor
 			contentType: "7",
 			unitID:      ky.liveID,
 			name:        title,
-		}, memberID, true)
+		}, memberID, true, csrfKey)
 		if err != nil {
 			return nil, fmt.Errorf("resolve kaoyan live video: %w", err)
 		}
@@ -108,7 +108,7 @@ func extractKaoyan(c *util.Client, ky kaoyanURLInfo, csrf ...string) (*extractor
 	}
 	purchased, payErr := fetchKaoyanPurchased(c, ky.termID, csrfKey)
 	chapters, jsonErr := fetchMocTermJSONChapters(c, ky.termID, csrfKey)
-	if len(chapters) == 0 && !purchased {
+	if len(chapters) == 0 {
 		if fallback, err := fetchChapters(c, ky.termID); err == nil && len(fallback) > 0 {
 			chapters = fallback
 		}
@@ -122,7 +122,7 @@ func extractKaoyan(c *util.Client, ky kaoyanURLInfo, csrf ...string) (*extractor
 		}
 		return nil, fmt.Errorf("no chapters in kaoyan course %s/%s (purchase required?)", ky.cid, ky.termID)
 	}
-	entries, err := entriesFromChapters(c, chapters, memberID)
+	entries, err := entriesFromChapters(c, chapters, memberID, csrfKey)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func parseMocTermJSONChapters(body string) ([]chapter, error) {
 			ls := lesson{id: valueString(rawLesson.ID), name: rawLesson.Name}
 			for _, rawUnit := range rawLesson.Units {
 				contentType := valueString(rawUnit.ContentType)
-				if contentType != "1" && contentType != "7" {
+				if contentType != "1" && contentType != "3" && contentType != "4" && contentType != "7" {
 					continue
 				}
 				vu := videoUnit{

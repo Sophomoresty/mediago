@@ -79,6 +79,105 @@ _DOTTED_RE = re.compile(r'\b([a-z][a-z0-9_]*(?:\.[a-z0-9_\-]+){2,}(?:/[0-9][0-9.
 _EXAMPLE_ID = re.compile(r'(?:^|/)(?:v|p|a|e|i|l|c|o|d|term|course|ep|column|lesson)_[0-9A-Za-z]{6,}')
 _LONG_HEX = re.compile(r'[0-9a-fA-F]{16,}')
 
+# --- False-positive exclusions ------------------------------------------------
+# Page URLs, example test URLs, and non-download-relevant internal endpoints that
+# the source happens to reference as string constants but are NOT API endpoints
+# the Go port needs to implement.
+
+# URL path patterns that indicate a page URL (user-facing navigation, not API).
+_PAGE_PATH_PATTERNS = (
+    "/learn/", "/course/", "/courseHome/", "/portal/", "/portal_new/",
+    "/study/directory/", "/study/coursePreview/", "/stuStudy/",
+    "/live/vod_room", "/columns/", "/spoc/",
+    "/fen/pc/tiny-class/",
+)
+# URL suffixes that are page resources, not API endpoints.
+_PAGE_SUFFIXES = (".html", ".htm")
+
+# Known false positives: URLs from test examples, page navigation, internal auth,
+# or patterns already covered by the Go extractor's URL matching.
+_FALSE_POSITIVE_URLS = {
+    # Bilibili: test example URL, cheese.go handles the /cheese/play/ pattern
+    "www.bilibili.com/cheese/play/ep3938",
+    # ICVE: page URLs
+    "mooc-old.icve.com.cn/cms/courseDetails/index.htm",
+    "www.icve.com.cn/portal_new/courseinfo/courseinfo.html",
+    "www.icve.com.cn/portal_new/microstudy/microstudy.html",
+    "www.icve.com.cn/portal_new/newweikeinfo/weikeinfo.html",
+    "www.icve.com.cn/portal_new/sourcematerial/edit_seematerial.html",
+    "www.icve.com.cn/study/directory/directory_list.html",
+    "zjy2.icve.com.cn/study/coursePreview/spoccourseIndex",
+    "zjy2.icve.com.cn/study/coursePreview/spoccourseIndex/courseware",
+    # iMOOC: page URLs with example course IDs
+    "coding.imooc.com/learn/list/705.html",
+    "coding.imooc.com/lesson/415.html#mid=33829",
+    # KeQQ: internal auth check, not download-relevant
+    "ke.qq.com/cgi-bin/identity/info",
+    # Koolearn: page URL with example course ID
+    "study.koolearn.com/fen/pc/tiny-class/catalogue/33974058787/176459",
+    # icourse163/Mooc163: page URLs and patterns already matched by kaoyan.go
+    "kaoyan.icourse163.org/course/packages/1206110837.htm",
+    "kaoyan.icourse163.org/course/packages/1467154173.htm",
+    "mooc.study.163.com/smartSpec/detail/1001319001.htm",
+    "study.163.com/course/introduction.htm",
+    "study.163.com/course/introduction/1209408816.htm",
+    "www.icourse163.org/columns/1003496001.htm",
+    "www.icourse163.org/columns/1205916206.htm",
+    "www.icourse163.org/course/ZJICM-1449623161",
+    "www.icourse163.org/learn/kaopei-1003304001",
+    "www.icourse163.org/live/480000001850708.htm",
+    "www.icourse163.org/spoc/learn/NUIST-1474052161",
+    # Zhihuishu: page URLs and internal non-download API
+    "coursehome.zhihuishu.com/courseHome/1000006263#teachTeam",
+    "fusioncourseh5.zhihuishu.com/stuStudy/aiStudy",
+    "lc.zhihuishu.com/live/vod_room.html",
+    "studyservice-api.zhihuishu.com/gateway/t/v1/course/getStudentUnReadMessageCount",
+    # CCTalk: auth token refresh, not download-relevant
+    "pass-cdn.hjapi.com/v1.1/access_token/convert",
+    # Xiwang: chat/messaging, not download-relevant
+    "msg.saasw.vdyoo.com/chat/v1/getHistoryBinaryMessages",
+}
+
+# Substrings in URLs that indicate non-download-relevant endpoints.
+_FALSE_POSITIVE_SUBSTRINGS = (
+    "login", "register", "check_token", "getStudentUnReadMessageCount",
+    "getHistoryBinaryMessages", "access_token/convert", "identity/info",
+)
+
+# Dotted API-method tokens that are false positives (login flows, etc.)
+_FALSE_POSITIVE_DOTTED = {
+    "xe.user.login.pwd",
+    "xe.learn-pc.user",
+    "xe.learn-pc.user/check_token",
+}
+
+
+def _is_false_positive(sig):
+    """Return True if this signature is a known false positive."""
+    # Exact match against known false positives.
+    if sig in _FALSE_POSITIVE_URLS:
+        return True
+    # Strip trailing version for dotted token comparison.
+    stem = _stem(sig)
+    if stem in _FALSE_POSITIVE_DOTTED:
+        return True
+    # Check substring patterns (login, auth, messaging).
+    low = sig.lower()
+    for sub in _FALSE_POSITIVE_SUBSTRINGS:
+        if sub.lower() in low:
+            return True
+    # Page URL patterns (path contains navigation segments).
+    if "/" in sig:
+        for pat in _PAGE_PATH_PATTERNS:
+            if pat in sig:
+                return True
+        # Page URL suffixes (.html, .htm) at the end of a path with example IDs
+        for suffix in _PAGE_SUFFIXES:
+            if sig.endswith(suffix) or (suffix + "#") in sig:
+                return True
+    return False
+
+
 # File-artefact / non-endpoint suffixes (temp files, archives, documents).
 _FILE_SUFFIX = (".mp4", ".txt", ".tar.gz", ".gz", ".cwr", ".m3u8", ".ts",
                 ".mp3", ".m4a", ".pdf", ".zip", ".png", ".jpg", ".css",
@@ -180,6 +279,8 @@ def endpoint_signatures(strings):
             full = host + path
             if _EXAMPLE_ID.search(path) or _LONG_HEX.search(path) or "xxxx" in path.lower():
                 sample.add(full)
+            elif _is_false_positive(full):
+                sample.add(full)  # Demote to informational
             elif _looks_like_endpoint(full):
                 api.add(full)
         # Dotted API-method tokens (the obfuscated routes live as fragments).
@@ -187,7 +288,9 @@ def endpoint_signatures(strings):
             frag = m.group(1)
             if re.match(r'^[0-9.]+$', frag):
                 continue
-            if _looks_like_endpoint(frag):
+            if _is_false_positive(frag):
+                sample.add(frag)  # Demote to informational
+            elif _looks_like_endpoint(frag):
                 api.add(frag)
     return api, sample
 

@@ -57,12 +57,16 @@ func TestParseMocTermJSONChapters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseMocTermJSONChapters: %v", err)
 	}
-	if len(chapters) != 1 || len(chapters[0].lessons) != 1 || len(chapters[0].lessons[0].videos) != 1 {
+	if len(chapters) != 1 || len(chapters[0].lessons) != 1 || len(chapters[0].lessons[0].videos) != 2 {
 		t.Fatalf("unexpected tree: %#v", chapters)
 	}
 	v := chapters[0].lessons[0].videos[0]
 	if v.contentID != "3" || v.contentType != "1" || v.unitID != "4" || v.name != "视频.mp4" {
 		t.Fatalf("video unit = %#v", v)
+	}
+	p := chapters[0].lessons[0].videos[1]
+	if p.contentID != "5" || p.contentType != "3" || p.unitID != "6" || p.name != "讲义.pdf" {
+		t.Fatalf("pdf unit = %#v", p)
 	}
 }
 

@@ -32,6 +32,10 @@ const (
 	check_url      = "https://api.houduweilai.com/mini/student/othersStudents"
 	api_url_format = "https://api.houduweilai.com%s"
 	USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+	// Baijiayun VOD resolution via shared.BaijiayunResolveVOD — calls
+	// https://www.baijiayun.com/vod/video/getPlayUrl with vid + token.
+	baijiayunVODPath = "/vod/video/getPlayUrl"
 )
 
 var (

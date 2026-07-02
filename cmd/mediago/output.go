@@ -21,6 +21,12 @@ const (
 	ansiYellow = "\033[33m"
 )
 
+var quietMode bool
+
+func setQuiet(q bool) {
+	quietMode = q
+}
+
 var qualityResolutionRe = regexp.MustCompile(`(?i)(\d{3,4})\s*p?`)
 
 func ttyEnabled(f *os.File) bool {
@@ -36,10 +42,16 @@ func writeColoredLine(w *os.File, color, format string, args ...any) {
 }
 
 func infof(format string, args ...any) {
+	if quietMode {
+		return
+	}
 	writeColoredLine(os.Stderr, ansiGreen, "[info] "+format, args...)
 }
 
 func warnf(format string, args ...any) {
+	if quietMode {
+		return
+	}
 	writeColoredLine(os.Stderr, ansiYellow, "[warn] "+format, args...)
 }
 
@@ -57,14 +69,23 @@ func interruptedf() {
 }
 
 func downloadf(format string, args ...any) {
+	if quietMode {
+		return
+	}
 	writeColoredLine(os.Stderr, ansiGreen, "[download] "+format, args...)
 }
 
 func mergerf(format string, args ...any) {
+	if quietMode {
+		return
+	}
 	writeColoredLine(os.Stderr, ansiGreen, "[Merger] "+format, args...)
 }
 
 func subtitlef(format string, args ...any) {
+	if quietMode {
+		return
+	}
 	writeColoredLine(os.Stderr, ansiGreen, "[subtitle] "+format, args...)
 }
 

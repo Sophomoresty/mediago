@@ -26,6 +26,7 @@ const (
 	legacy_token_api       = "https://www.sieredu.com/web/video/videoFile/getToken"
 	open_course_detail_api = "https://www.sieredu.com/web/opencourse/openCourseCouMaterialDetail"
 	open_course_check_api  = "https://www.sieredu.com/web/play/checkOpenCoursePlay"
+	product_detail_api     = "https://www.sieredu.com/web/product/detail"
 	getplayinfo_api        = "https://playvideo.vodplayvideo.net/getplayinfo/v4/%s/%s"
 	SIER_APP_SECRET        = "e1018d3bb5664bada75ef6a619a07900"
 	SIER_APP_KEY           = "10000"
@@ -121,6 +122,9 @@ func extractNormalCourse(c *util.Client, h map[string]string, id string) (*extra
 	if err != nil {
 		return nil, fmt.Errorf("sier plan list: %w", err)
 	}
+	// Fetch product detail for pricing/entitlement if product_id is available.
+	productID := extractProductID(plan, id)
+	price := fetchProductPrice(c, h, productID)
 	var videos []videoInfo
 	var files []fileInfo
 	for _, p := range extractLists(unwrapMap(plan), "list", "records", "courseList") {
@@ -146,7 +150,17 @@ func extractNormalCourse(c *util.Client, h map[string]string, id string) (*extra
 	if len(files) == 0 {
 		files = collectFiles(unwrapMap(plan), "")
 	}
-	return buildCourse(c, h, sanitize(title), id, videos, files)
+	info, err := buildCourse(c, h, sanitize(title), id, videos, files)
+	if err != nil {
+		return nil, err
+	}
+	if price > 0 {
+		if info.Extra == nil {
+			info.Extra = map[string]any{}
+		}
+		info.Extra["price"] = price
+	}
+	return info, nil
 }
 func buildCourse(c *util.Client, h map[string]string, title, courseID string, videos []videoInfo, files []fileInfo) (*extractor.MediaInfo, error) {
 	seen := map[string]bool{}
@@ -203,6 +217,48 @@ func fetchCourseList(c *util.Client, h map[string]string) ([]courseRef, error) {
 	}
 	return out, nil
 }
+
+// fetchProductPrice fetches the product detail from the product/detail API to
+// extract pricing info for the course package (source: Sier_Course._get_course_price).
+func fetchProductPrice(c *util.Client, h map[string]string, productID string) float64 {
+	if productID == "" {
+		return 0
+	}
+	resp, err := requestJSON(c, "POST", product_detail_api, map[string]string{"id": productID}, nil, h, "https://study.sieredu.com/")
+	if err != nil {
+		return 0
+	}
+	entity := unwrapMap(resp)
+	return extractPrice(entity)
+}
+
+// extractProductID finds a product_id from the plan response or course data.
+func extractProductID(plan any, courseID string) string {
+	m := unwrapMap(plan)
+	if id := first(textAt(m, "productId", "product_id")); id != "" {
+		return id
+	}
+	for _, list := range extractLists(m, "list", "records", "courseList") {
+		if id := first(textAt(list, "productId", "product_id")); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// extractPrice looks for standard price keys in a map.
+func extractPrice(m map[string]any) float64 {
+	for _, key := range []string{"price", "salePrice", "sellPrice", "minPrice", "payPrice", "coursePrice", "productPrice", "actualPrice", "discountPrice"} {
+		if v := textAt(m, key); v != "" {
+			var f float64
+			if _, err := fmt.Sscanf(v, "%f", &f); err == nil && f > 0 {
+				return f
+			}
+		}
+	}
+	return 0
+}
+
 func collectVideos(v any, courseID, fallbackCatalog string) []videoInfo {
 	var out []videoInfo
 	var walk func(any)

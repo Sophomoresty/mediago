@@ -32,12 +32,14 @@ func ParseNetscapeFile(path string) ([]*http.Cookie, error) {
 		domain := fields[0]
 
 		expires, _ := strconv.ParseInt(fields[4], 10, 64)
+		value := fields[6]
 		c := &http.Cookie{
 			Domain: domain,
 			Path:   fields[2],
 			Secure: strings.EqualFold(fields[3], "TRUE"),
 			Name:   fields[5],
-			Value:  fields[6],
+			Value:  value,
+			Quoted: strings.ContainsAny(value, " +/=|,"),
 		}
 		if expires > 0 {
 			c.Expires = time.Unix(expires, 0)

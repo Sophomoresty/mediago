@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sophomoresty/mediago/internal/download"
 	"github.com/Sophomoresty/mediago/internal/extractor"
 )
 
@@ -55,23 +56,23 @@ func TestProcessURLPlaylistOutputsExtractionAndDownloadCounts(t *testing.T) {
 	oldSimulate := simulate
 	oldDumpJSON := dumpJSON
 	oldListFormats := listFormats
-	oldDownloadOne := downloadOneFn
+	oldDownloadOne := downloadOneWithArchiveFn
 	oldDownloadAll := downloadAll
 	simulate = false
 	dumpJSON = false
 	listFormats = false
 	downloadAll = true
-	downloadOneFn = func(ctx context.Context, info *extractor.MediaInfo) error { return nil }
+	downloadOneWithArchiveFn = func(ctx context.Context, info *extractor.MediaInfo, archive *download.Archive) error { return nil }
 	t.Cleanup(func() {
 		simulate = oldSimulate
 		dumpJSON = oldDumpJSON
 		listFormats = oldListFormats
-		downloadOneFn = oldDownloadOne
+		downloadOneWithArchiveFn = oldDownloadOne
 		downloadAll = oldDownloadAll
 	})
 
 	stdout, stderr := captureStdStreams(t, func() {
-		if err := processURL(context.Background(), "https://example.com/stub-playlist"); err != nil {
+		if err := processURL(context.Background(), "https://example.com/stub-playlist", nil); err != nil {
 			t.Fatalf("processURL returned error: %v", err)
 		}
 	})
@@ -112,7 +113,7 @@ func TestProcessURLDumpJSONUsesExtractorResult(t *testing.T) {
 	})
 
 	stdout, stderr := captureStdStreams(t, func() {
-		if err := processURL(context.Background(), "https://example.com/stub-single"); err != nil {
+		if err := processURL(context.Background(), "https://example.com/stub-single", nil); err != nil {
 			t.Fatalf("processURL returned error: %v", err)
 		}
 	})
@@ -148,7 +149,7 @@ func TestProcessURLListFormatsPrintsFormatTable(t *testing.T) {
 	})
 
 	stdout, _ := captureStdStreams(t, func() {
-		if err := processURL(context.Background(), "https://example.com/stub-single"); err != nil {
+		if err := processURL(context.Background(), "https://example.com/stub-single", nil); err != nil {
 			t.Fatalf("processURL returned error: %v", err)
 		}
 	})
